@@ -1,0 +1,8 @@
+{
+  "name": "نبض القلوب",
+  "description": "تطبيق تفاعلي مشفر لشريكين مع مزامنة لحظية وعجلة حظ ومسابقات وصور عشوائية.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

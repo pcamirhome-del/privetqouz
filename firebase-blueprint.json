@@ -1,0 +1,132 @@
+{
+  "entities": {
+    "CoupleRoom": {
+      "title": "CoupleRoom",
+      "description": "Encrypted shared room for two partners containing membership and encrypted configuration.",
+      "type": "object",
+      "properties": {
+        "ownerUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "memberUids": {
+          "type": "array",
+          "description": "Array of up to 2 authorized partner UIDs."
+        },
+        "joinCodeHash": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "encryptedSettings": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 400000
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["ownerUid", "memberUids", "joinCodeHash", "encryptedSettings", "createdAt", "updatedAt"]
+    },
+    "PartnerPresence": {
+      "title": "PartnerPresence",
+      "description": "Real-time encrypted online status and quick pings for Male or Female partner.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["male", "female"]
+        },
+        "encryptedData": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 10000
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "role", "encryptedData", "updatedAt"]
+    },
+    "LiveState": {
+      "title": "LiveState",
+      "description": "Real-time encrypted state for wheel, quiz, photos, reactions, and background.",
+      "type": "object",
+      "properties": {
+        "updatedBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "encryptedData": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 750000
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["updatedBy", "encryptedData", "updatedAt"]
+    },
+    "EncryptedPhoto": {
+      "title": "EncryptedPhoto",
+      "description": "Client-side AES-256 encrypted persistent photo uploaded from Settings.",
+      "type": "object",
+      "properties": {
+        "uploaderUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "encryptedData": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 850000
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uploaderUid", "encryptedData", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/rooms/{roomId}": {
+      "schema": { "$ref": "#/entities/CoupleRoom" },
+      "description": "Shared couple room document."
+    },
+    "/rooms/{roomId}/presence/{roleId}": {
+      "schema": { "$ref": "#/entities/PartnerPresence" },
+      "description": "Partner online presence and ping state."
+    },
+    "/rooms/{roomId}/liveState/{stateId}": {
+      "schema": { "$ref": "#/entities/LiveState" },
+      "description": "Live synchronized game and reaction state."
+    },
+    "/rooms/{roomId}/photos/{photoId}": {
+      "schema": { "$ref": "#/entities/EncryptedPhoto" },
+      "description": "Encrypted shared gallery photos."
+    }
+  }
+}

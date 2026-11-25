@@ -1,0 +1,172 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Reusable Hardened Primitives
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidHash(h) {
+      return h is string && h.size() == 64 && h.matches('^[a-f0-9]{64}$');
+    }
+
+    function roomExists(roomId) {
+      return exists(/databases/$(database)/documents/rooms/$(roomId));
+    }
+
+    function isDeviceInRoom(roomId, deviceId) {
+      return isValidId(deviceId) &&
+        roomExists(roomId) &&
+        deviceId in get(/databases/$(database)/documents/rooms/$(roomId)).data.memberUids;
+    }
+
+    function isValidCoupleRoom(data) {
+      return data.keys().hasAll(['ownerUid', 'memberUids', 'joinCodeHash', 'encryptedSettings', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['ownerUid', 'memberUids', 'joinCodeHash', 'encryptedSettings', 'createdAt', 'updatedAt']) &&
+        isValidId(data.ownerUid) &&
+        data.memberUids is list &&
+        data.memberUids.size() >= 1 &&
+        data.memberUids.size() <= 2 &&
+        data.memberUids[0] is string &&
+        isValidId(data.memberUids[0]) &&
+        (data.memberUids.size() == 1 || (data.memberUids[1] is string && isValidId(data.memberUids[1]))) &&
+        isValidHash(data.joinCodeHash) &&
+        data.encryptedSettings is string &&
+        data.encryptedSettings.size() >= 1 &&
+        data.encryptedSettings.size() <= 400000 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidPartnerPresence(data, roleId) {
+      return data.keys().hasAll(['uid', 'role', 'encryptedData', 'updatedAt']) &&
+        data.keys().hasOnly(['uid', 'role', 'encryptedData', 'updatedAt']) &&
+        isValidId(data.uid) &&
+        data.role in ['male', 'female'] &&
+        data.role == roleId &&
+        data.encryptedData is string &&
+        data.encryptedData.size() >= 1 &&
+        data.encryptedData.size() <= 10000 &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidLiveState(data) {
+      return data.keys().hasAll(['updatedBy', 'encryptedData', 'updatedAt']) &&
+        data.keys().hasOnly(['updatedBy', 'encryptedData', 'updatedAt']) &&
+        isValidId(data.updatedBy) &&
+        data.encryptedData is string &&
+        data.encryptedData.size() >= 1 &&
+        data.encryptedData.size() <= 750000 &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidEncryptedPhoto(data) {
+      return data.keys().hasAll(['uploaderUid', 'encryptedData', 'createdAt']) &&
+        data.keys().hasOnly(['uploaderUid', 'encryptedData', 'createdAt']) &&
+        isValidId(data.uploaderUid) &&
+        data.encryptedData is string &&
+        data.encryptedData.size() >= 1 &&
+        data.encryptedData.size() <= 850000 &&
+        data.createdAt is timestamp;
+    }
+
+    match /rooms/{roomId} {
+      allow get: if isValidId(roomId);
+      allow list: if false;
+
+      allow create: if isValidId(roomId) &&
+        isValidCoupleRoom(incoming()) &&
+        incoming().memberUids.size() == 1 &&
+        incoming().memberUids[0] == incoming().ownerUid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+
+      allow update: if isValidId(roomId) &&
+        isValidCoupleRoom(incoming()) &&
+        incoming().ownerUid == existing().ownerUid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (
+          // Action 1: Update encrypted settings or passcode hash
+          (
+            incoming().memberUids == existing().memberUids &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['encryptedSettings', 'joinCodeHash', 'updatedAt'])
+          ) ||
+          // Action 2: Second partner joins with valid joinCodeHash
+          (
+            existing().memberUids.size() < 2 &&
+            incoming().joinCodeHash == existing().joinCodeHash &&
+            incoming().memberUids.size() == existing().memberUids.size() + 1 &&
+            existing().memberUids[0] in incoming().memberUids &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['memberUids', 'updatedAt'])
+          ) ||
+          // Action 3: Touch updatedAt
+          (
+            incoming().memberUids == existing().memberUids &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['updatedAt'])
+          )
+        );
+
+      allow delete: if false;
+
+      match /presence/{roleId} {
+        allow get: if isValidId(roomId) && roleId in ['male', 'female'] && roomExists(roomId);
+        allow list: if false;
+        allow create: if isValidId(roomId) &&
+          roleId in ['male', 'female'] &&
+          isValidPartnerPresence(incoming(), roleId) &&
+          incoming().updatedAt == request.time &&
+          isDeviceInRoom(roomId, incoming().uid);
+        allow update: if isValidId(roomId) &&
+          roleId in ['male', 'female'] &&
+          isValidPartnerPresence(incoming(), roleId) &&
+          incoming().updatedAt == request.time &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['uid', 'role', 'encryptedData', 'updatedAt']) &&
+          isDeviceInRoom(roomId, incoming().uid);
+        allow delete: if false;
+      }
+
+      match /liveState/{stateId} {
+        allow get: if isValidId(roomId) && stateId in ['wheel', 'quiz', 'photos', 'reaction', 'background'] && roomExists(roomId);
+        allow list: if false;
+        allow create: if isValidId(roomId) &&
+          stateId in ['wheel', 'quiz', 'photos', 'reaction', 'background'] &&
+          isValidLiveState(incoming()) &&
+          incoming().updatedAt == request.time &&
+          isDeviceInRoom(roomId, incoming().updatedBy);
+        allow update: if isValidId(roomId) &&
+          stateId in ['wheel', 'quiz', 'photos', 'reaction', 'background'] &&
+          isValidLiveState(incoming()) &&
+          incoming().updatedAt == request.time &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['updatedBy', 'encryptedData', 'updatedAt']) &&
+          isDeviceInRoom(roomId, incoming().updatedBy);
+        allow delete: if false;
+      }
+
+      match /photos/{photoId} {
+        allow get: if isValidId(roomId) && isValidId(photoId) && roomExists(roomId);
+        allow list: if false;
+        allow create: if isValidId(roomId) &&
+          isValidId(photoId) &&
+          isValidEncryptedPhoto(incoming()) &&
+          incoming().createdAt == request.time &&
+          isDeviceInRoom(roomId, incoming().uploaderUid);
+        allow update: if false;
+        allow delete: if isValidId(roomId) && isValidId(photoId) && roomExists(roomId);
+      }
+    }
+  }
+}
