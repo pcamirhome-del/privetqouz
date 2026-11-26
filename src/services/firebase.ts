@@ -5,6 +5,7 @@ import {
   getDatabase,
   onValue,
   ref as dbRef,
+  remove as dbRemove,
   set as dbSet,
 } from 'firebase/database';
 import {
@@ -19,12 +20,6 @@ import {
   setDoc,
   updateDoc,
 } from 'firebase/firestore';
-import {
-  getDownloadURL,
-  getStorage,
-  ref as storageRef,
-  uploadBytes,
-} from 'firebase/storage';
 import {
   DEFAULT_ROOM_SETTINGS,
   EncryptedRoomSettings,
@@ -54,7 +49,6 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
-export const storage = getStorage(app);
 
 if (typeof window !== 'undefined') {
   isAnalyticsSupported()
@@ -389,13 +383,35 @@ export interface SyncedBackgroundPayload {
   updatedAt: number;
 }
 
+const MAX_INLINE_VIDEO_GIF_BYTES = Math.round(1.5 * 1024 * 1024);
+
+function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  timeoutMessage: string
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(timeoutMessage)), ms);
+    promise.then(
+      (val) => {
+        clearTimeout(timer);
+        resolve(val);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
+
 export async function uploadSharedBackground(
   roomId: string,
   passcode: string,
   mediaType: MediaBackgroundConfig['type'],
-  file?: File
+  fileOrUrl?: File | string
 ): Promise<SyncedBackgroundPayload> {
-  if (mediaType === 'default' || !file) {
+  if (mediaType === 'default' || !fileOrUrl) {
     const resetPayload: SyncedBackgroundPayload = {
       type: 'default',
       url: '',
@@ -403,55 +419,93 @@ export async function uploadSharedBackground(
     };
     const encryptedData = encryptPayload(resetPayload, roomId, passcode);
     if (rtdb) {
-      await dbSet(dbRef(rtdb, `shared/${roomId}/background`), {
-        encryptedData,
-        updatedAt: resetPayload.updatedAt,
-      }).catch(() => {});
+      await withTimeout(
+        dbSet(dbRef(rtdb, `shared/${roomId}/background`), {
+          encryptedData,
+          updatedAt: resetPayload.updatedAt,
+        }),
+        12000,
+        'انتهت مهلة الاتصال بقاعدة البيانات الفورية.'
+      );
     }
-    await writeLiveState(roomId, passcode, 'background', resetPayload);
+    await writeLiveState(roomId, passcode, 'background', resetPayload).catch(() => {});
     return resetPayload;
   }
 
   let finalUrl = '';
-  try {
-    const ext = file.name.split('.').pop()?.replace(/[^a-zA-Z0-9]/g, '') || '';
-    const storagePath = `shared/${roomId}/background${ext ? `.${ext}` : ''}`;
-    const fileRef = storageRef(storage, storagePath);
-    await uploadBytes(fileRef, file, {
-      contentType: file.type || (mediaType === 'video' ? 'video/mp4' : 'image/jpeg'),
-      cacheControl: 'public, max-age=3600',
-    });
-    finalUrl = await getDownloadURL(fileRef);
-  } catch (storageErr) {
-    // Fallback to encrypted inline payload via Firestore when Firebase Storage rules/bucket block uploads
+  let resolvedType: MediaBackgroundConfig['type'] = mediaType;
+
+  if (typeof fileOrUrl === 'string') {
+    const trimmed = fileOrUrl.trim();
+    if (!/^https?:\/\/.+/i.test(trimmed)) {
+      throw new Error('يرجى إدخال رابط مباشر صالح يبدأ بـ https:// أو http://');
+    }
+    finalUrl = trimmed;
+    const lower = trimmed.toLowerCase();
+    if (/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(lower)) {
+      resolvedType = 'video';
+    } else if (/\.gif(\?|#|$)/i.test(lower)) {
+      resolvedType = 'gif';
+    }
+  } else {
+    const file = fileOrUrl;
     if (mediaType === 'image') {
-      finalUrl = await compressImageFile(file, 1280, 420000);
-    } else if (file.size <= 500000) {
-      finalUrl = await fileToDataUrl(file);
+      finalUrl = await compressImageFile(file, 1280, 350 * 1024, 0.75);
     } else {
-      throw storageErr instanceof Error
-        ? new Error(
-            'تعذر رفع الملف الكبير إلى Firebase Storage. تأكد من تفعيل قواعد Firebase Storage أو اختر ملفاً أصغر من 500 كيلوبايت.'
-          )
-        : new Error('تعذر رفع ملف الخلفية إلى السحابة.');
+      if (file.size > MAX_INLINE_VIDEO_GIF_BYTES) {
+        throw new Error(
+          'حجم الفيديو أو GIF يتجاوز 1.5 ميجابايت. اختر ملفاً أصغر أو الصق رابطاً مباشراً في الحقل أدناه.'
+        );
+      }
+      finalUrl = await fileToDataUrl(file);
     }
   }
 
   const payload: SyncedBackgroundPayload = {
-    type: mediaType,
+    type: resolvedType,
     url: finalUrl,
     updatedAt: Date.now(),
   };
 
-  // Encrypt URL and mediaType with VITE_ENCRYPTION_PEPPER + room key before storing in RTDB & Firestore
+  // Encrypt compressed Base64 / URL and media type with VITE_ENCRYPTION_PEPPER + room key
   const encryptedData = encryptPayload(payload, roomId, passcode);
+  let rtdbSaved = false;
+
   if (rtdb) {
-    await dbSet(dbRef(rtdb, `shared/${roomId}/background`), {
-      encryptedData,
-      updatedAt: payload.updatedAt,
-    }).catch(() => {});
+    try {
+      await withTimeout(
+        dbSet(dbRef(rtdb, `shared/${roomId}/background`), {
+          encryptedData,
+          updatedAt: payload.updatedAt,
+        }),
+        15000,
+        'تعذر الوصول إلى Firebase Realtime Database (انتهت المهلة).'
+      );
+      rtdbSaved = true;
+    } catch (rtdbErr) {
+      if (encryptedData.length > 700000) {
+        throw rtdbErr instanceof Error
+          ? rtdbErr
+          : new Error('تعذر حفظ الخلفية في Realtime Database.');
+      }
+    }
   }
-  await writeLiveState(roomId, passcode, 'background', payload);
+
+  // Also sync via Firestore when payload fits Firestore's document limit
+  if (encryptedData.length <= 700000) {
+    try {
+      await writeLiveState(roomId, passcode, 'background', payload);
+    } catch (fsErr) {
+      if (!rtdbSaved) {
+        throw fsErr;
+      }
+    }
+  } else if (!rtdbSaved) {
+    throw new Error(
+      'تأكد من تفعيل Firebase Realtime Database وقواعد الأمان لحفظ ملفات الفيديو/GIF.'
+    );
+  }
+
   return payload;
 }
 
@@ -514,6 +568,25 @@ export async function uploadEncryptedPhoto(
   const deviceUid = getDeviceUid();
   const photoPath = `rooms/${roomId}/photos/${photo.id}`;
   const encryptedData = encryptPayload(photo, roomId, passcode);
+  let rtdbSaved = false;
+
+  if (rtdb) {
+    try {
+      await withTimeout(
+        dbSet(dbRef(rtdb, `shared/${roomId}/gallery/${photo.id}`), {
+          id: photo.id,
+          encryptedData,
+          createdAt: photo.createdAt,
+        }),
+        15000,
+        'انتهت مهلة حفظ الصورة في Realtime Database.'
+      );
+      rtdbSaved = true;
+    } catch {
+      // Fallback to Firestore below
+    }
+  }
+
   try {
     await setDoc(doc(db, 'rooms', roomId, 'photos', photo.id), {
       uploaderUid: deviceUid,
@@ -531,8 +604,49 @@ export async function uploadEncryptedPhoto(
       updatedAt: Date.now(),
     });
   } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, photoPath);
+    if (!rtdbSaved) {
+      handleFirestoreError(error, OperationType.WRITE, photoPath);
+    }
   }
+}
+
+export function subscribeSharedGallery(
+  roomId: string,
+  passcode: string,
+  onPhotos: (photos: SharedPhotoItem[]) => void
+) {
+  if (!rtdb) return () => {};
+  const galleryRef = dbRef(rtdb, `shared/${roomId}/gallery`);
+  return onValue(
+    galleryRef,
+    (snapshot) => {
+      const val = snapshot.val() as Record<
+        string,
+        {id?: string; encryptedData?: string; createdAt?: number}
+      > | null;
+      if (!val) {
+        onPhotos([]);
+        return;
+      }
+      const decodedList: SharedPhotoItem[] = [];
+      for (const entry of Object.values(val)) {
+        if (!entry?.encryptedData) continue;
+        const item = decryptPayload<SharedPhotoItem>(
+          entry.encryptedData,
+          roomId,
+          passcode
+        );
+        if (item?.id && item?.dataUrl) {
+          decodedList.push(item);
+        }
+      }
+      decodedList.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+      onPhotos(decodedList);
+    },
+    () => {
+      // Ignore transient RTDB errors if Firestore gallery is active
+    }
+  );
 }
 
 export async function fetchEncryptedPhoto(
@@ -559,6 +673,19 @@ export async function deleteEncryptedPhoto(
   currentPhotosState: PhotosLiveState | null
 ): Promise<void> {
   const path = `rooms/${roomId}/photos/${photoId}`;
+  let rtdbDeleted = false;
+  if (rtdb) {
+    try {
+      await withTimeout(
+        dbRemove(dbRef(rtdb, `shared/${roomId}/gallery/${photoId}`)),
+        10000,
+        'انتهت مهلة حذف الصورة.'
+      );
+      rtdbDeleted = true;
+    } catch {
+      // Continue to Firestore cleanup
+    }
+  }
   try {
     await deleteDoc(doc(db, 'rooms', roomId, 'photos', photoId));
     const nextIds = (currentPhotosState?.photoIds || []).filter((id) => id !== photoId);
@@ -573,7 +700,9 @@ export async function deleteEncryptedPhoto(
       updatedAt: Date.now(),
     });
   } catch (error) {
-    handleFirestoreError(error, OperationType.DELETE, path);
+    if (!rtdbDeleted) {
+      handleFirestoreError(error, OperationType.DELETE, path);
+    }
   }
 }
 
@@ -588,7 +717,8 @@ export async function reEncryptRoomOnPinChange(
   reactionState: ReactionEvent | null,
   photos: SharedPhotoItem[],
   presenceMale: PartnerPresenceData | null,
-  presenceFemale: PartnerPresenceData | null
+  presenceFemale: PartnerPresenceData | null,
+  backgroundState?: SyncedBackgroundPayload | null
 ): Promise<void> {
   const deviceUid = getDeviceUid();
   await saveRoomSettings(roomId, oldPin, {...nextSettings, passcode: newPin});
@@ -599,12 +729,33 @@ export async function reEncryptRoomOnPinChange(
   if (presenceFemale)
     await updatePartnerPresence(roomId, newPin, 'female', presenceFemale);
 
+  if (backgroundState) {
+    const bgCipher = encryptPayload(backgroundState, roomId, newPin);
+    if (rtdb) {
+      await dbSet(dbRef(rtdb, `shared/${roomId}/background`), {
+        encryptedData: bgCipher,
+        updatedAt: backgroundState.updatedAt || Date.now(),
+      }).catch(() => {});
+    }
+    if (bgCipher.length <= 700000) {
+      await writeLiveState(roomId, newPin, 'background', backgroundState).catch(() => {});
+    }
+  }
+
   const newPhotoIds: string[] = [];
   let nextActiveId = photosState?.activePhotoId || null;
   for (const photo of photos) {
     const newPhotoId = `p_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
     const updatedItem: SharedPhotoItem = {...photo, id: newPhotoId};
     const encryptedData = encryptPayload(updatedItem, roomId, newPin);
+    if (rtdb) {
+      await dbSet(dbRef(rtdb, `shared/${roomId}/gallery/${newPhotoId}`), {
+        id: newPhotoId,
+        encryptedData,
+        createdAt: updatedItem.createdAt,
+      }).catch(() => {});
+      await dbRemove(dbRef(rtdb, `shared/${roomId}/gallery/${photo.id}`)).catch(() => {});
+    }
     await setDoc(doc(db, 'rooms', roomId, 'photos', newPhotoId), {
       uploaderUid: deviceUid,
       encryptedData,

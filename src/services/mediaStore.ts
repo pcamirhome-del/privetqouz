@@ -80,44 +80,115 @@ export function fileToDataUrl(file: File): Promise<string> {
 
 export async function compressImageFile(
   file: File,
-  maxDim = 960,
-  maxDataUrlBytes = 420000
+  maxDim = 900,
+  maxDataUrlBytes = 350 * 1024,
+  initialQuality = 0.75
 ): Promise<string> {
   if (file.type === 'image/gif') {
     return fileToDataUrl(file);
   }
-  const rawUrl = await fileToDataUrl(file);
-  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-    const el = new Image();
-    el.onload = () => resolve(el);
-    el.onerror = reject;
-    el.src = rawUrl;
-  });
 
-  let width = img.naturalWidth || img.width;
-  let height = img.naturalHeight || img.height;
-  if (width > maxDim || height > maxDim) {
-    if (width >= height) {
-      height = Math.round((height * maxDim) / width);
-      width = maxDim;
-    } else {
-      width = Math.round((width * maxDim) / height);
-      height = maxDim;
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error('تعذر قراءة ملف الصورة.'));
+      el.src = objectUrl;
+    });
+
+    let width = img.naturalWidth || img.width;
+    let height = img.naturalHeight || img.height;
+    if (width > maxDim || height > maxDim) {
+      if (width >= height) {
+        height = Math.round((height * maxDim) / width);
+        width = maxDim;
+      } else {
+        width = Math.round((width * maxDim) / height);
+        height = maxDim;
+      }
     }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return fileToDataUrl(file);
+    ctx.drawImage(img, 0, 0, width, height);
+
+    // Prefer image/webp if browser encoder supports it, otherwise fall back to image/jpeg
+    const webpProbe = canvas.toDataURL('image/webp', initialQuality);
+    const mimeType = webpProbe.startsWith('data:image/webp')
+      ? 'image/webp'
+      : 'image/jpeg';
+
+    let quality = initialQuality;
+    let result = mimeType === 'image/webp' ? webpProbe : canvas.toDataURL('image/jpeg', quality);
+    while (result.length > maxDataUrlBytes && quality > 0.32) {
+      quality = Number((quality - 0.12).toFixed(2));
+      result = canvas.toDataURL(mimeType, quality);
+    }
+
+    // If still slightly above target on very detailed images, scale down dimensions slightly
+    if (result.length > maxDataUrlBytes) {
+      const scaleRatio = Math.sqrt(maxDataUrlBytes / result.length) * 0.92;
+      canvas.width = Math.max(320, Math.round(width * scaleRatio));
+      canvas.height = Math.max(320, Math.round(height * scaleRatio));
+      const resizedCtx = canvas.getContext('2d');
+      if (resizedCtx) {
+        resizedCtx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        result = canvas.toDataURL(mimeType, 0.72);
+      }
+    }
+
+    return result;
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+export async function compressImageToBlob(
+  file: File,
+  maxDim = 1440,
+  quality = 0.84
+): Promise<Blob> {
+  if (file.type === 'image/gif' || file.type.startsWith('video/')) {
+    return file;
   }
 
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return rawUrl;
-  ctx.drawImage(img, 0, 0, width, height);
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error('تعذر قراءة ملف الصورة.'));
+      el.src = objectUrl;
+    });
 
-  let quality = 0.82;
-  let result = canvas.toDataURL('image/jpeg', quality);
-  while (result.length > maxDataUrlBytes && quality > 0.35) {
-    quality -= 0.12;
-    result = canvas.toDataURL('image/jpeg', quality);
+    let width = img.naturalWidth || img.width;
+    let height = img.naturalHeight || img.height;
+    if (width > maxDim || height > maxDim) {
+      if (width >= height) {
+        height = Math.round((height * maxDim) / width);
+        width = maxDim;
+      } else {
+        width = Math.round((width * maxDim) / height);
+        height = maxDim;
+      }
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return file;
+    ctx.drawImage(img, 0, 0, width, height);
+
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob((b) => resolve(b), 'image/jpeg', quality)
+    );
+    return blob || file;
+  } finally {
+    URL.revokeObjectURL(objectUrl);
   }
-  return result;
 }

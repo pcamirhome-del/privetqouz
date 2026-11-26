@@ -32,6 +32,7 @@ import {
   subscribePartnerPresence,
   subscribeRoomSettings,
   subscribeSharedBackground,
+  subscribeSharedGallery,
   type SyncedBackgroundPayload,
   testConnection,
   updatePartnerPresence,
@@ -97,6 +98,7 @@ function MainAppContent() {
 
   const lastReactionIdRef = useRef<string | null>(null);
   const fetchedPhotoIdsRef = useRef<Set<string>>(new Set());
+  const rtdbPhotoIdsRef = useRef<Set<string>>(new Set());
   const isOnline = useOnlineStatus();
 
   // Boot connection check
@@ -188,6 +190,19 @@ function MainAppContent() {
         saveEncryptedLocalMedia(`bg_${roomId}`, bg.url, roomId, pin).catch(() => {});
       }
     });
+    const unsubGallery = subscribeSharedGallery(roomId, pin, (rtdbPhotos) => {
+      const nextRtdbIds = new Set(rtdbPhotos.map((p) => p.id));
+      const prevRtdbIds = rtdbPhotoIdsRef.current;
+      rtdbPhotoIdsRef.current = nextRtdbIds;
+      rtdbPhotos.forEach((p) => fetchedPhotoIdsRef.current.add(p.id));
+
+      setPhotos((prev) => {
+        const legacyNonRtdb = prev.filter(
+          (p) => !nextRtdbIds.has(p.id) && !prevRtdbIds.has(p.id)
+        );
+        return [...rtdbPhotos, ...legacyNonRtdb];
+      });
+    });
     const unsubReaction = subscribeLiveState<ReactionEvent>(
       roomId,
       pin,
@@ -231,6 +246,7 @@ function MainAppContent() {
       unsubQuiz();
       unsubPhotos();
       unsubBackground();
+      unsubGallery();
       unsubReaction();
     };
   }, [session]);
@@ -296,7 +312,8 @@ function MainAppContent() {
         activeReaction,
         photos,
         malePresence,
-        femalePresence
+        femalePresence,
+        syncedBgPayload
       );
       setSettings({...nextSettings, passcode: newPin});
       setSession({...session, pin: newPin});
@@ -310,19 +327,20 @@ function MainAppContent() {
       photos,
       malePresence,
       femalePresence,
+      syncedBgPayload,
     ]
   );
 
   const handleUpdateBackground = async (
     type: MediaBackgroundConfig['type'],
-    file?: File
+    fileOrUrl?: File | string
   ) => {
     if (!session) return;
     const result = await uploadSharedBackground(
       session.roomId,
       session.pin,
       type,
-      file
+      fileOrUrl
     );
     setSyncedBgPayload(result);
 

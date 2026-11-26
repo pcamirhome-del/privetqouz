@@ -3,6 +3,7 @@ import {
   Download,
   Eye,
   Image as ImageIcon,
+  Link2,
   Lock,
   LogOut,
   Plus,
@@ -35,7 +36,7 @@ interface SettingsModalProps {
   onChangePasscode: (newPin: string, nextSettings: EncryptedRoomSettings) => Promise<void>;
   onUpdateBackground: (
     type: MediaBackgroundConfig['type'],
-    file?: File
+    fileOrUrl?: File | string
   ) => Promise<void>;
   onUploadPhoto: (dataUrl: string, caption: string) => Promise<void>;
   onDeletePhoto: (photoId: string) => Promise<void>;
@@ -94,6 +95,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [wheelSegments, setWheelSegments] = useState<WheelSegment[]>(settings.wheelSegments);
   const [quizRewards, setQuizRewards] = useState<QuizRewardButton[]>(settings.quizRewards);
   const [photoCaption, setPhotoCaption] = useState('');
+  const [bgDirectUrl, setBgDirectUrl] = useState('');
+  const [bgDirectUrlType, setBgDirectUrlType] = useState<'image' | 'video'>('video');
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -211,7 +214,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
     setBusy(true);
-    setStatusMsg('جاري رفع الخلفية وتشفيرها ومزامنتها مع الشريك...');
+    setStatusMsg('جاري ضغط الخلفية وتشفيرها ومزامنتها...');
     try {
       const isVideo = file.type.startsWith('video/');
       const isGif = file.type === 'image/gif';
@@ -222,7 +225,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           : 'image';
 
       await onUpdateBackground(mediaType, file);
-      setStatusMsg('تم رفع ومزامنة الخلفية على شاشة الشريك بنجاح.');
+      setStatusMsg('تم حفظ ومزامنة الخلفية على شاشة الشريك بنجاح.');
     } catch (err) {
       setStatusMsg(
         err instanceof Error ? err.message : 'تعذر تحميل أو مزامنة ملف الخلفية.'
@@ -233,18 +236,39 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   };
 
+  const handleBackgroundDirectUrl = async () => {
+    const trimmed = bgDirectUrl.trim();
+    if (!trimmed) {
+      setStatusMsg('يرجى لصق رابط مباشر لصورة أو فيديو أو GIF أولاً.');
+      return;
+    }
+    setBusy(true);
+    setStatusMsg('جاري تشفير الرابط ومزامنته مع الشريك...');
+    try {
+      await onUpdateBackground(bgDirectUrlType, trimmed);
+      setBgDirectUrl('');
+      setStatusMsg('تم تطبيق الرابط ومزامنة الخلفية على شاشة الشريك بنجاح.');
+    } catch (err) {
+      setStatusMsg(
+        err instanceof Error ? err.message : 'تعذر حفظ رابط الخلفية.'
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
     setBusy(true);
-    setStatusMsg(null);
+    setStatusMsg('جاري ضغط الصور وتشفيرها للمعرض...');
     try {
       for (const file of Array.from(files)) {
-        const compressed = await compressImageFile(file, 960, 400000);
+        const compressed = await compressImageFile(file, 900, 350 * 1024, 0.75);
         await onUploadPhoto(compressed, photoCaption.trim());
       }
       setPhotoCaption('');
-      setStatusMsg('تم تشفير ورفع الصور إلى المعرض الدائم ومزامنتها.');
+      setStatusMsg('تم ضغط وتشفير الصور ومزامنتها مع الشريك بنجاح.');
     } catch (err) {
       setStatusMsg(err instanceof Error ? err.message : 'تعذر رفع الصورة.');
     } finally {
@@ -486,18 +510,71 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <label className="flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-rose-300/35 bg-black/35 p-4 text-center cursor-pointer hover:border-rose-400 transition">
                     <Upload className="h-6 w-6 text-rose-400" />
                     <span className="text-xs font-extrabold text-white">
-                      اختر صورة، فيديو (MP4/WebM)، أو GIF للخلفية
+                      اختر صورة، فيديو (حتى 1.5MB)، أو GIF للخلفية
                     </span>
                     <span className="text-[11px] text-rose-200/70">
-                      تظهر الخلفية بوضوح خلف الواجهة مع تحكم كامل بالتقريب والإبعاد
+                      يتم ضغط الصور تلقائياً لأقل من 350 كيلوبايت وتشفيرها للمزامنة الفورية
                     </span>
                     <input
                       type="file"
                       accept="image/*,video/mp4,video/webm"
+                      disabled={busy}
                       onChange={handleBackgroundFile}
                       className="hidden"
                     />
                   </label>
+
+                  {/* Direct Video / GIF / Image URL Paste Input */}
+                  <div className="rounded-2xl border border-rose-300/20 bg-black/35 p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="flex items-center gap-1.5 text-xs font-bold text-rose-200">
+                        <Link2 className="h-3.5 w-3.5 text-rose-400" />
+                        <span>أو الصق رابط فيديو / GIF مباشر</span>
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => setBgDirectUrlType('video')}
+                          className={`rounded-lg px-2 py-0.5 text-[10px] font-bold transition ${
+                            bgDirectUrlType === 'video'
+                              ? 'bg-rose-600 text-white'
+                              : 'bg-white/10 text-rose-200'
+                          }`}
+                        >
+                          فيديو
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setBgDirectUrlType('image')}
+                          className={`rounded-lg px-2 py-0.5 text-[10px] font-bold transition ${
+                            bgDirectUrlType === 'image'
+                              ? 'bg-rose-600 text-white'
+                              : 'bg-white/10 text-rose-200'
+                          }`}
+                        >
+                          صورة / GIF
+                        </button>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="url"
+                        dir="ltr"
+                        value={bgDirectUrl}
+                        onChange={(e) => setBgDirectUrl(e.target.value)}
+                        placeholder="https://example.com/background.mp4"
+                        className="flex-1 min-w-0 rounded-xl border border-rose-300/25 bg-black/45 px-2.5 py-2 text-xs text-white focus:border-rose-400 focus:outline-none"
+                      />
+                      <button
+                        type="button"
+                        disabled={busy || !bgDirectUrl.trim()}
+                        onClick={handleBackgroundDirectUrl}
+                        className="shrink-0 min-h-[36px] rounded-xl bg-rose-600 px-3 text-xs font-extrabold text-white hover:bg-rose-500 disabled:opacity-50 transition"
+                      >
+                        تطبيق
+                      </button>
+                    </div>
+                  </div>
 
                   {/* Background Zoom In / Zoom Out Controls */}
                   <div className="rounded-2xl border border-rose-300/20 bg-black/35 p-3 space-y-2.5">
@@ -602,12 +679,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     disabled={busy}
                     onClick={async () => {
                       setBusy(true);
+                      setStatusMsg(null);
                       try {
                         setBackgroundScale(1);
                         setBackgroundFit('cover');
                         onPreviewBackgroundControls?.(null);
                         await onUpdateBackground('default');
                         setStatusMsg('تمت استعادة الخلفية الافتراضية ومزامنتها.');
+                      } catch (err) {
+                        setStatusMsg(
+                          err instanceof Error
+                            ? err.message
+                            : 'تعذر استعادة الخلفية الافتراضية.'
+                        );
                       } finally {
                         setBusy(false);
                       }
