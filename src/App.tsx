@@ -40,6 +40,7 @@ import {
   fetchEncryptedPhoto,
   reEncryptRoomOnPinChange,
   saveRoomSettings,
+  SHARED_ROOM_ID,
   subscribeLiveState,
   subscribeMysteryCardsState,
   subscribePartnerPresence,
@@ -87,7 +88,6 @@ import {
 } from './components/SpecialRewardModal';
 
 const DEFAULT_BG_IMAGE = '/src/assets/images/default_romantic_bg_1795637641791.jpg';
-const STORAGE_ROOM_KEY = 'nabd_last_room_id';
 
 function MainAppContent() {
   const [session, setSession] = useState<{
@@ -124,6 +124,7 @@ function MainAppContent() {
     () => ambientAudio.isPlaying
   );
   const [clapLabel, setClapLabel] = useState<string | null>(null);
+  const [syncToast, setSyncToast] = useState<string | null>(null);
   const [periodicReminderVisible, setPeriodicReminderVisible] = useState(false);
   const [localBgUrl, setLocalBgUrl] = useState<string>('');
   const [syncedBgPayload, setSyncedBgPayload] =
@@ -140,9 +141,18 @@ function MainAppContent() {
   const lastWinDrawIdRef = useRef<string | null>(null);
   const lastWinQuizIdRef = useRef<string | null>(null);
   const clapTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const syncToastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fetchedPhotoIdsRef = useRef<Set<string>>(new Set());
   const rtdbPhotoIdsRef = useRef<Set<string>>(new Set());
   const isOnline = useOnlineStatus();
+
+  const showSyncToast = useCallback((msg = 'تمت المزامنة مع الشريك ✅') => {
+    if (syncToastTimeoutRef.current) clearTimeout(syncToastTimeoutRef.current);
+    setSyncToast(msg);
+    syncToastTimeoutRef.current = setTimeout(() => {
+      setSyncToast(null);
+    }, 3200);
+  }, []);
 
   const triggerClap = useCallback((label?: string) => {
     if (clapTimeoutRef.current) clearTimeout(clapTimeoutRef.current);
@@ -446,12 +456,11 @@ function MainAppContent() {
     });
   }, [session, photosState?.photoIds]);
 
-  const handleAuthenticateRoom = async (rawRoomId: string, pin: string) => {
-    const result = await connectOrCreateRoom(rawRoomId, pin);
-    localStorage.setItem(STORAGE_ROOM_KEY, result.roomId);
+  const handleAuthenticateRoom = async (_rawRoomId: string, pin: string) => {
+    const result = await connectOrCreateRoom(SHARED_ROOM_ID, pin);
     setSettings(result.settings);
     setSession({
-      roomId: result.roomId,
+      roomId: SHARED_ROOM_ID,
       pin: result.cipherKey,
       role: result.role,
     });
@@ -464,8 +473,9 @@ function MainAppContent() {
       if (!session) return;
       setSettings(next);
       await saveRoomSettings(session.roomId, session.pin, next);
+      showSyncToast('تمت المزامنة مع الشريك ✅');
     },
-    [session]
+    [session, showSyncToast]
   );
 
   const handleChangePasscode = useCallback(
@@ -527,6 +537,7 @@ function MainAppContent() {
       };
       setSettings(next);
       await saveRoomSettings(session.roomId, session.pin, next);
+      showSyncToast('تمت المزامنة مع الشريك ✅');
       return;
     }
 
@@ -543,6 +554,7 @@ function MainAppContent() {
     };
     setSettings(next);
     await saveRoomSettings(session.roomId, session.pin, next);
+    showSyncToast('تمت المزامنة مع الشريك ✅');
   };
 
   const handleUploadPhoto = async (
@@ -564,12 +576,14 @@ function MainAppContent() {
     rtdbPhotoIdsRef.current.add(item.id);
     setPhotos((prev) => [...prev, item]);
     await uploadEncryptedPhoto(session.roomId, session.pin, item, photosState);
+    showSyncToast('تمت المزامنة مع الشريك ✅');
   };
 
   const handleDeletePhoto = async (photoId: string) => {
     if (!session) return;
     setPhotos((prev) => prev.filter((p) => p.id !== photoId));
     await deleteEncryptedPhoto(session.roomId, session.pin, photoId, photosState);
+    showSyncToast('تمت المزامنة مع الشريك ✅');
   };
 
   const handleConfirmTaskCompletion = useCallback(
@@ -696,7 +710,7 @@ function MainAppContent() {
     return (
       <LoginScreen
         onAuthenticateRoom={handleAuthenticateRoom}
-        defaultRoomId={localStorage.getItem(STORAGE_ROOM_KEY) || 'habibi-room'}
+        defaultRoomId={SHARED_ROOM_ID}
       />
     );
   }
@@ -1094,6 +1108,21 @@ function MainAppContent() {
 
       {/* Center-Screen Clapping Hands on Win */}
       <ClappingHandsOverlay active={Boolean(clapLabel)} label={clapLabel || undefined} />
+
+      {/* Real-Time Sync Confirmation Toast */}
+      <AnimatePresence>
+        {syncToast && (
+          <motion.div
+            initial={{opacity: 0, y: -12, scale: 0.95}}
+            animate={{opacity: 1, y: 0, scale: 1}}
+            exit={{opacity: 0, y: -12, scale: 0.95}}
+            transition={{duration: 0.2}}
+            className="pointer-events-none fixed top-3 inset-x-0 z-[70] mx-auto w-fit max-w-[90%] rounded-full border border-emerald-300/50 bg-emerald-900/95 px-4 py-1.5 text-xs font-extrabold text-emerald-100 shadow-2xl backdrop-blur-md"
+          >
+            {syncToast}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Periodic Configurable Playtime Reminder Message */}
       <AnimatePresence>

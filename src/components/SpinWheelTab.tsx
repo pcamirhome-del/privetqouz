@@ -91,9 +91,11 @@ export const SpinWheelTab: React.FC<SpinWheelTabProps> = ({
     ? wheelState?.femaleDailyPick || null
     : null;
 
-  const myPickToday = role === 'male' ? malePickToday : femalePickToday;
-  const partnerPickToday = role === 'male' ? femalePickToday : malePickToday;
-  const hasSpunToday = Boolean(myPickToday);
+  const isHusband = role === 'male';
+  const myPickToday = isHusband ? malePickToday : femalePickToday;
+  const partnerPickToday = isHusband ? femalePickToday : malePickToday;
+  // Husband has unlimited spins (no daily cap or cooldown); Wife keeps daily pick check
+  const hasSpunLocked = !isHusband && Boolean(femalePickToday);
   const bothSpunToday = Boolean(malePickToday && femalePickToday);
   const todayFinalDraw: WheelFinalDraw | null =
     isTodayState && wheelState?.finalDraw?.dayKey === todayKey
@@ -212,7 +214,7 @@ export const SpinWheelTab: React.FC<SpinWheelTabProps> = ({
   }, []);
 
   const handleSpin = async () => {
-    if (isAnimating || hasSpunToday) return;
+    if (isAnimating || hasSpunLocked) return;
 
     // Exclude partner's result from today so both NEVER receive the same outcome
     const {chosen, originalIndex} = pickWeightedSegment(
@@ -443,17 +445,17 @@ export const SpinWheelTab: React.FC<SpinWheelTabProps> = ({
           {/* Center Spin Hub */}
           <button
             type="button"
-            disabled={isAnimating || hasSpunToday}
+            disabled={isAnimating || hasSpunLocked}
             onClick={handleSpin}
             className="absolute top-1/2 left-1/2 z-10 flex h-14 w-14 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-full border-2 border-amber-200 bg-gradient-to-br from-rose-600 to-rose-900 text-white shadow-xl hover:scale-105 active:scale-95 transition disabled:opacity-70"
           >
-            {hasSpunToday ? (
+            {hasSpunLocked ? (
               <Lock className="h-4 w-4" />
             ) : (
               <RotateCw className={`h-4 w-4 ${isAnimating ? 'animate-spin' : ''}`} />
             )}
             <span className="text-[9px] font-extrabold mt-0.5">
-              {hasSpunToday ? 'تم اليوم' : 'دوران'}
+              {hasSpunLocked ? 'تم اليوم' : 'دوران'}
             </span>
           </button>
         </div>
@@ -491,7 +493,45 @@ export const SpinWheelTab: React.FC<SpinWheelTabProps> = ({
           </div>
         )}
 
-        {!hasSpunToday ? (
+        {isHusband ? (
+          bothSpunToday ? (
+            <div className="grid grid-cols-2 gap-1.5">
+              <button
+                type="button"
+                disabled={isAnimating || isDrawShuffling}
+                onClick={handleSpin}
+                className="flex min-h-[42px] items-center justify-center gap-1.5 rounded-2xl bg-gradient-to-r from-rose-600 to-rose-500 px-2.5 py-2 text-[11px] sm:text-xs font-extrabold text-white shadow-lg hover:from-rose-500 hover:to-rose-400 active:scale-[0.98] transition disabled:opacity-60"
+              >
+                <RotateCw className={`h-3.5 w-3.5 shrink-0 ${isAnimating ? 'animate-spin' : ''}`} />
+                <span className="truncate">
+                  {isAnimating ? 'جاري السحب...' : 'أدر مرة أخرى ♾️'}
+                </span>
+              </button>
+              <button
+                type="button"
+                disabled={isDrawShuffling || isAnimating}
+                onClick={handleStartFinalRandomDraw}
+                className="flex min-h-[42px] items-center justify-center gap-1.5 rounded-2xl bg-gradient-to-r from-amber-500 to-rose-600 px-2.5 py-2 text-[11px] sm:text-xs font-extrabold text-white shadow-lg hover:from-amber-400 hover:to-rose-500 active:scale-[0.98] transition disabled:opacity-60"
+              >
+                <Shuffle className={`h-3.5 w-3.5 shrink-0 ${isDrawShuffling ? 'animate-spin' : ''}`} />
+                <span className="truncate">
+                  {isDrawShuffling ? 'جاري التبديل...' : 'اختيار عشوائي'}
+                </span>
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              disabled={isAnimating}
+              onClick={handleSpin}
+              className="w-full min-h-[42px] rounded-2xl bg-gradient-to-r from-rose-600 to-rose-500 px-5 py-2 text-xs sm:text-sm font-extrabold text-white shadow-lg hover:from-rose-500 hover:to-rose-400 active:scale-[0.98] transition disabled:opacity-60"
+            >
+              {isAnimating
+                ? 'جاري السحب...'
+                : 'أدر عجلة الحظ (دوران مفتوح بلا حدود ♾️)'}
+            </button>
+          )
+        ) : !hasSpunLocked ? (
           <button
             type="button"
             disabled={isAnimating}
@@ -518,8 +558,7 @@ export const SpinWheelTab: React.FC<SpinWheelTabProps> = ({
           <div className="flex w-full min-h-[40px] items-center justify-center gap-1.5 rounded-2xl border border-rose-300/25 bg-black/35 px-3 py-1.5 text-[11px] font-bold text-rose-100">
             <Sparkles className="h-3.5 w-3.5 text-amber-300 shrink-0" />
             <span>
-              استخدمت دورتك اليوم ({myPickToday?.targetLabel}) · بانتظار دوران{' '}
-              {role === 'male' ? 'الزوجة' : 'الزوج'}
+              استخدمت دورتك اليوم ({myPickToday?.targetLabel}) · بانتظار دوران الزوج
             </span>
           </div>
         )}

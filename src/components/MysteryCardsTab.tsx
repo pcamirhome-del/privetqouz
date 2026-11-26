@@ -263,7 +263,7 @@ export const MysteryCardsTab: React.FC<MysteryCardsTabProps> = ({
         )}
       </div>
 
-      {/* Dynamic 3D Flip Cards Grid matching exact Settings card count */}
+      {/* Dynamic 3D Flip Cards Grid matching exact Settings card count (1 to N) */}
       <div
         className={`grid flex-1 min-h-0 gap-2 py-0.5 ${
           boardSlots.length === 1
@@ -272,10 +272,11 @@ export const MysteryCardsTab: React.FC<MysteryCardsTabProps> = ({
               ? 'grid-cols-2'
               : boardSlots.length <= 6
                 ? 'grid-cols-3'
-                : 'grid-cols-3 sm:grid-cols-4 auto-rows-[minmax(84px,1fr)] overflow-y-auto inner-scroll'
+                : 'grid-cols-3 sm:grid-cols-4 auto-rows-[minmax(72px,1fr)] overflow-y-auto inner-scroll'
         }`}
       >
         {boardSlots.map((card, idx) => {
+          const cardNumber = idx + 1;
           const flippedByMale = maleFlip?.slotIndex === idx ? maleFlip : null;
           const flippedByFemale = femaleFlip?.slotIndex === idx ? femaleFlip : null;
           const flippedRecord = flippedByMale || flippedByFemale;
@@ -289,8 +290,8 @@ export const MysteryCardsTab: React.FC<MysteryCardsTabProps> = ({
               disabled={!canClick}
               onClick={() => handleFlipCard(idx)}
               style={{perspective: '1000px'}}
-              aria-label={`بطاقة رقم ${idx + 1}`}
-              className={`group relative h-full w-full min-h-[78px] rounded-2xl focus:outline-none ${
+              aria-label={`بطاقة رقم ${cardNumber}`}
+              className={`group relative h-full w-full min-h-[68px] rounded-2xl focus:outline-none ${
                 canClick ? 'cursor-pointer' : 'cursor-default'
               }`}
             >
@@ -302,7 +303,7 @@ export const MysteryCardsTab: React.FC<MysteryCardsTabProps> = ({
                 }}
                 className="relative h-full w-full"
               >
-                {/* Card Front (Numbers Only, Face-Down Mystery Side) */}
+                {/* Card Front (Sequential Number 1..N centered cleanly on closed face) */}
                 <div
                   style={{backfaceVisibility: 'hidden'}}
                   className={`absolute inset-0 flex items-center justify-center rounded-2xl border p-2 shadow-lg transition ${
@@ -314,9 +315,9 @@ export const MysteryCardsTab: React.FC<MysteryCardsTabProps> = ({
                   <div className="pointer-events-none absolute inset-1.5 rounded-xl border border-dashed border-amber-200/25" />
                   <span
                     dir="ltr"
-                    className="font-mono-num text-3xl sm:text-4xl font-black text-amber-200 drop-shadow-[0_2px_10px_rgba(251,191,36,0.45)]"
+                    className="font-mono-num tabular-nums select-none text-3xl sm:text-4xl font-black leading-none text-amber-200 drop-shadow-[0_2px_10px_rgba(251,191,36,0.45)]"
                   >
-                    {idx + 1}
+                    {cardNumber}
                   </span>
                 </div>
 

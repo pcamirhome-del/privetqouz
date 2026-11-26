@@ -331,7 +331,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
       await onSaveSettings(nextSettings);
       onPreviewBackgroundControls?.(null);
-      setStatusMsg('تم حفظ الإعدادات ومزامنتها لحظياً مع الشريك.');
+      setStatusMsg('تمت المزامنة مع الشريك ✅');
     } catch (err) {
       setStatusMsg(err instanceof Error ? err.message : 'تعذر حفظ الإعدادات.');
     } finally {
@@ -354,7 +354,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           : 'image';
 
       await onUpdateBackground(mediaType, file);
-      setStatusMsg('تم حفظ ومزامنة الخلفية على شاشة الشريك بنجاح.');
+      setStatusMsg('تمت المزامنة مع الشريك ✅');
     } catch (err) {
       setStatusMsg(
         err instanceof Error ? err.message : 'تعذر تحميل أو مزامنة ملف الخلفية.'
@@ -376,7 +376,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     try {
       await onUpdateBackground(bgDirectUrlType, trimmed);
       setBgDirectUrl('');
-      setStatusMsg('تم تطبيق الرابط ومزامنة الخلفية على شاشة الشريك بنجاح.');
+      setStatusMsg('تمت المزامنة مع الشريك ✅');
     } catch (err) {
       setStatusMsg(
         err instanceof Error ? err.message : 'تعذر حفظ رابط الخلفية.'
@@ -397,6 +397,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       let duplicateFound = false;
 
       for (const file of Array.from(files)) {
+        if (isGifFile(file) && file.size > 1.5 * 1024 * 1024) {
+          throw new Error('حجم ملف GIF يتجاوز 1.5 ميجابايت، يرجى اختيار ملف أصغر.');
+        }
         const compressed = await compressImageFile(file, 900, 350 * 1024, 0.75);
         const hashes = await computeImageFingerprint(compressed);
         const alreadyExists = await isDuplicatePhoto(compressed, hashes, [
@@ -425,9 +428,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
       setPhotoCaption('');
       if (uploadedCount > 0 && !duplicateFound) {
-        setStatusMsg('تم ضغط وتشفير الصور ومزامنتها لحظياً مع الشريك بنجاح.');
+        setStatusMsg('تمت المزامنة مع الشريك ✅');
       } else if (uploadedCount > 0 && duplicateFound) {
-        setStatusMsg(`تم رفع ${uploadedCount} صورة وتجاهل الصور المرفوعة من قبل.`);
+        setStatusMsg(`تمت المزامنة مع الشريك ✅ (تم رفع ${uploadedCount} صورة)`);
       } else if (duplicateFound) {
         setStatusMsg('تم الرفع من قبل');
       }
@@ -1113,7 +1116,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         setBackgroundFit('cover');
                         onPreviewBackgroundControls?.(null);
                         await onUpdateBackground('default');
-                        setStatusMsg('تمت استعادة الخلفية الافتراضية ومزامنتها.');
+                        setStatusMsg('تمت المزامنة مع الشريك ✅');
                       } catch (err) {
                         setStatusMsg(
                           err instanceof Error

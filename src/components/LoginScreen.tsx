@@ -13,8 +13,6 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
   defaultRoomId,
 }) => {
   const [pin, setPin] = useState('');
-  const [roomId, setRoomId] = useState(defaultRoomId);
-  const [showRoomEdit, setShowRoomEdit] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -40,7 +38,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
     setBusy(true);
     setError(null);
     try {
-      await onAuthenticateRoom(roomId, pin);
+      await onAuthenticateRoom(defaultRoomId, pin);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'تعذر الدخول إلى الغرفة.');
     } finally {
@@ -77,37 +75,12 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
           </p>
         </div>
 
-        {/* Encrypted Room Selector */}
+        {/* Shared Encrypted Room Indicator */}
         <div className="mb-3 rounded-2xl border border-rose-300/15 bg-black/30 p-2.5">
-          <div className="flex items-center justify-between gap-2 text-xs">
-            <div className="flex items-center gap-1.5 text-emerald-300 font-semibold truncate">
-              <ShieldCheck className="h-4 w-4 shrink-0" />
-              <span className="truncate">مزامنة مشفرة جاهزة</span>
-            </div>
-            <button
-              type="button"
-              onClick={() => setShowRoomEdit((v) => !v)}
-              className="shrink-0 rounded-lg bg-rose-500/20 px-2 py-1 text-[11px] font-semibold text-rose-200 hover:bg-rose-500/30"
-            >
-              رمز الغرفة
-            </button>
+          <div className="flex items-center justify-center gap-1.5 text-xs text-emerald-300 font-semibold">
+            <ShieldCheck className="h-4 w-4 shrink-0" />
+            <span className="truncate">غرفة الثنائي المشتركة (مزامنة مشفرة جاهزة)</span>
           </div>
-
-          {showRoomEdit && (
-            <div className="mt-2 pt-2 border-t border-rose-400/15">
-              <label className="block text-[11px] text-rose-200/80 mb-1">
-                معرّف الغرفة المشترك بينكما (نفس الكود لدى الشريكين):
-              </label>
-              <input
-                type="text"
-                dir="ltr"
-                value={roomId}
-                onChange={(e) => setRoomId(e.target.value)}
-                placeholder="habibi-room"
-                className="w-full rounded-xl border border-rose-300/25 bg-black/45 px-3 py-1.5 text-xs text-white focus:border-rose-400 focus:outline-none"
-              />
-            </div>
-          )}
         </div>
 
         {error && (
