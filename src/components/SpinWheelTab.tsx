@@ -1,8 +1,14 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
 import confetti from 'canvas-confetti';
 import {AnimatePresence, motion} from 'motion/react';
-import {Check, RotateCw, X} from 'lucide-react';
-import {PartnerRole, WheelLiveState, WheelSegment} from '../types/app';
+import {Check, Lock, RotateCw, Shuffle, Sparkles, X} from 'lucide-react';
+import {
+  DailyWheelPick,
+  PartnerRole,
+  WheelFinalDraw,
+  WheelLiveState,
+  WheelSegment,
+} from '../types/app';
 import {soundEngine} from '../services/sound';
 
 interface SpinWheelTabProps {
@@ -12,14 +18,34 @@ interface SpinWheelTabProps {
   onUpdateWheel: (next: WheelLiveState) => Promise<void>;
 }
 
-function pickWeightedIndex(segments: WheelSegment[]): number {
-  const total = segments.reduce((acc, s) => acc + Math.max(0.1, s.weight), 0);
+function getLocalDayKey(date = new Date()): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function pickWeightedSegment(
+  segments: WheelSegment[],
+  excludeLabel?: string,
+  excludeIndex?: number
+): {chosen: WheelSegment; originalIndex: number} {
+  const indexed = segments.map((seg, idx) => ({seg, idx}));
+  const filtered = indexed.filter(({seg, idx}) => {
+    if (excludeIndex !== undefined && idx === excludeIndex) return false;
+    if (excludeLabel && seg.label.trim() === excludeLabel.trim()) return false;
+    return true;
+  });
+  const pool = filtered.length > 0 ? filtered : indexed;
+
+  const total = pool.reduce((acc, item) => acc + Math.max(0.1, item.seg.weight), 0);
   let r = Math.random() * total;
-  for (let i = 0; i < segments.length; i++) {
-    r -= Math.max(0.1, segments[i].weight);
-    if (r <= 0) return i;
+  for (const item of pool) {
+    r -= Math.max(0.1, item.seg.weight);
+    if (r <= 0) return {chosen: item.seg, originalIndex: item.idx};
   }
-  return segments.length - 1;
+  const fallback = pool[pool.length - 1];
+  return {chosen: fallback.seg, originalIndex: fallback.idx};
 }
 
 export const SpinWheelTab: React.FC<SpinWheelTabProps> = ({
@@ -30,9 +56,15 @@ export const SpinWheelTab: React.FC<SpinWheelTabProps> = ({
 }) => {
   const [rotation, setRotation] = useState(0);
   const [isAnimating, setIsAnimating] = useState(false);
+  const [drawHighlight, setDrawHighlight] = useState<PartnerRole>('male');
+  const [isDrawShuffling, setIsDrawShuffling] = useState(false);
+
   const lastSpinIdRef = useRef<string | null>(null);
+  const lastDrawIdRef = useRef<string | null>(null);
   const rafRef = useRef<number | null>(null);
   const currentRotRef = useRef(0);
+
+  const todayKey = getLocalDayKey();
 
   const safeSegments = useMemo(
     () =>
@@ -44,12 +76,33 @@ export const SpinWheelTab: React.FC<SpinWheelTabProps> = ({
 
   const sliceDeg = 360 / safeSegments.length;
 
+  const isTodayState = wheelState?.dayKey === todayKey;
+  const malePickToday: DailyWheelPick | null = isTodayState
+    ? wheelState?.maleDailyPick || null
+    : null;
+  const femalePickToday: DailyWheelPick | null = isTodayState
+    ? wheelState?.femaleDailyPick || null
+    : null;
+
+  const myPickToday = role === 'male' ? malePickToday : femalePickToday;
+  const partnerPickToday = role === 'male' ? femalePickToday : malePickToday;
+  const hasSpunToday = Boolean(myPickToday);
+  const bothSpunToday = Boolean(malePickToday && femalePickToday);
+  const todayFinalDraw: WheelFinalDraw | null =
+    isTodayState && wheelState?.finalDraw?.dayKey === todayKey
+      ? wheelState.finalDraw
+      : null;
+
+  // Wheel Spin Physics Animation
   useEffect(() => {
     if (!wheelState || wheelState.status === 'idle') return;
     if (wheelState.spinId === lastSpinIdRef.current) return;
 
     lastSpinIdRef.current = wheelState.spinId;
-    if (wheelState.status === 'spinning' || wheelState.status === 'awaiting_response') {
+    if (
+      wheelState.status === 'spinning' ||
+      wheelState.status === 'awaiting_response'
+    ) {
       const startRot = currentRotRef.current;
       const targetRot = wheelState.targetRotation;
       const duration = 4200;
@@ -61,7 +114,6 @@ export const SpinWheelTab: React.FC<SpinWheelTabProps> = ({
       const step = (now: number) => {
         const elapsed = now - startTime;
         const t = Math.min(1, elapsed / duration);
-        // Smooth quintic ease-out physics deceleration
         const eased = 1 - Math.pow(1 - t, 4.2);
         const current = startRot + (targetRot - startRot) * eased;
         currentRotRef.current = current;
@@ -84,10 +136,7 @@ export const SpinWheelTab: React.FC<SpinWheelTabProps> = ({
             origin: {y: 0.58},
             colors: ['#fb7185', '#e11d48', '#fde68a', '#ffffff'],
           });
-          if (
-            wheelState.spunBy === role &&
-            wheelState.status === 'spinning'
-          ) {
+          if (wheelState.spunBy === role && wheelState.status === 'spinning') {
             onUpdateWheel({
               ...wheelState,
               status: 'awaiting_response',
@@ -101,6 +150,54 @@ export const SpinWheelTab: React.FC<SpinWheelTabProps> = ({
     }
   }, [wheelState, sliceDeg, role, onUpdateWheel]);
 
+  // Synced 3-Second Alternation Animation Between Husband's & Wife's Pick
+  useEffect(() => {
+    if (!todayFinalDraw || todayFinalDraw.status !== 'shuffling') {
+      setIsDrawShuffling(false);
+      return;
+    }
+    if (todayFinalDraw.drawId === lastDrawIdRef.current) return;
+
+    lastDrawIdRef.current = todayFinalDraw.drawId;
+    setIsDrawShuffling(true);
+
+    let toggle: PartnerRole = 'male';
+    const interval = setInterval(() => {
+      toggle = toggle === 'male' ? 'female' : 'male';
+      setDrawHighlight(toggle);
+      soundEngine.playTick();
+    }, 180);
+
+    const endTimer = setTimeout(() => {
+      clearInterval(interval);
+      setDrawHighlight(todayFinalDraw.chosenRole);
+      setIsDrawShuffling(false);
+      soundEngine.playWin();
+      confetti({
+        particleCount: 85,
+        spread: 80,
+        origin: {y: 0.55},
+        colors: ['#fb7185', '#fde68a', '#38bdf8', '#ffffff'],
+      });
+
+      if (wheelState && todayFinalDraw.status === 'shuffling') {
+        onUpdateWheel({
+          ...wheelState,
+          finalDraw: {
+            ...todayFinalDraw,
+            status: 'revealed',
+          },
+          timestamp: Date.now(),
+        }).catch(() => {});
+      }
+    }, 3000);
+
+    return () => {
+      clearInterval(interval);
+      clearTimeout(endTimer);
+    };
+  }, [todayFinalDraw, wheelState, onUpdateWheel]);
+
   useEffect(() => {
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
@@ -108,12 +205,16 @@ export const SpinWheelTab: React.FC<SpinWheelTabProps> = ({
   }, []);
 
   const handleSpin = async () => {
-    if (isAnimating) return;
-    const targetIndex = pickWeightedIndex(safeSegments);
-    const chosen = safeSegments[targetIndex];
+    if (isAnimating || hasSpunToday) return;
 
-    // Top pointer is at 0deg (12 o'clock). Segment i covers [i*sliceDeg, (i+1)*sliceDeg] clockwise from top.
-    const segmentCenter = targetIndex * sliceDeg + sliceDeg / 2;
+    // Exclude partner's result from today so both NEVER receive the same outcome
+    const {chosen, originalIndex} = pickWeightedSegment(
+      safeSegments,
+      partnerPickToday?.targetLabel,
+      partnerPickToday?.targetIndex
+    );
+
+    const segmentCenter = originalIndex * sliceDeg + sliceDeg / 2;
     const jitter = (Math.random() - 0.5) * sliceDeg * 0.55;
     const desiredMod = (360 - (segmentCenter + jitter) + 360) % 360;
     const currentMod = ((currentRotRef.current % 360) + 360) % 360;
@@ -121,13 +222,58 @@ export const SpinWheelTab: React.FC<SpinWheelTabProps> = ({
     const extraSpins = 360 * (6 + Math.floor(Math.random() * 3));
     const targetRotation = currentRotRef.current + extraSpins + delta;
 
+    const newPick: DailyWheelPick = {
+      dayKey: todayKey,
+      role,
+      targetIndex: originalIndex,
+      targetLabel: chosen.label,
+      spunAt: Date.now(),
+    };
+
     await onUpdateWheel({
       spinId: `spin_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       spunBy: role,
-      targetIndex,
+      targetIndex: originalIndex,
       targetLabel: chosen.label,
       targetRotation,
       status: 'spinning',
+      timestamp: Date.now(),
+      dayKey: todayKey,
+      maleDailyPick: role === 'male' ? newPick : malePickToday,
+      femaleDailyPick: role === 'female' ? newPick : femalePickToday,
+      finalDraw: todayFinalDraw,
+    });
+  };
+
+  const handleStartFinalRandomDraw = async () => {
+    if (!bothSpunToday || !malePickToday || !femalePickToday || isDrawShuffling) return;
+    const chosenRole: PartnerRole = Math.random() < 0.5 ? 'male' : 'female';
+    const chosenLabel =
+      chosenRole === 'male' ? malePickToday.targetLabel : femalePickToday.targetLabel;
+
+    await onUpdateWheel({
+      ...(wheelState || {
+        spinId: `spin_${Date.now()}`,
+        spunBy: role,
+        targetIndex: 0,
+        targetLabel: chosenLabel,
+        targetRotation: currentRotRef.current,
+        status: 'idle',
+        timestamp: Date.now(),
+      }),
+      dayKey: todayKey,
+      maleDailyPick: malePickToday,
+      femaleDailyPick: femalePickToday,
+      finalDraw: {
+        drawId: `draw_${Date.now()}`,
+        dayKey: todayKey,
+        maleLabel: malePickToday.targetLabel,
+        femaleLabel: femalePickToday.targetLabel,
+        chosenRole,
+        chosenLabel,
+        startedAt: Date.now(),
+        status: 'shuffling',
+      },
       timestamp: Date.now(),
     });
   };
@@ -161,31 +307,61 @@ export const SpinWheelTab: React.FC<SpinWheelTabProps> = ({
       wheelState.status === 'rejected');
 
   return (
-    <div className="flex h-full w-full flex-col items-center justify-between py-2 px-2">
-      {/* Header status strip */}
-      <div className="w-full text-center drop-shadow-[0_1px_3px_rgba(0,0,0,0.95)]">
-        <h2 className="text-base sm:text-lg font-extrabold text-white">
-          لعبة رول الحظ
-        </h2>
-        <p className="text-[11px] font-semibold text-rose-100">
-          {isAnimating
-            ? 'العجلة تدور الآن...'
-            : wheelState?.status === 'accepted'
-              ? `تم القبول: ${wheelState.targetLabel}`
-              : wheelState?.status === 'rejected'
-                ? `تم الرفض: ${wheelState.targetLabel}`
-                : 'أدر العجلة لتحديد التحدي اللحظي مع شريكك'}
-        </p>
+    <div className="flex h-full w-full flex-col items-center justify-between py-1 px-1.5">
+      {/* Header + Daily Results Strip */}
+      <div className="w-full space-y-1.5">
+        <div className="text-center drop-shadow-[0_1px_3px_rgba(0,0,0,0.95)]">
+          <h2 className="text-sm sm:text-base font-extrabold text-white">
+            لعبة عجلة الحظ اليومية
+          </h2>
+        </div>
+
+        <div className="grid grid-cols-2 gap-1.5">
+          <div
+            className={`rounded-xl border px-2 py-1 text-center transition ${
+              isDrawShuffling && drawHighlight === 'male'
+                ? 'border-amber-300 bg-amber-500/40 scale-[1.03]'
+                : todayFinalDraw?.status === 'revealed' &&
+                    todayFinalDraw.chosenRole === 'male'
+                  ? 'border-emerald-300 bg-emerald-600/40'
+                  : 'border-sky-300/30 bg-black/30'
+            }`}
+          >
+            <span className="block text-[10px] font-bold text-sky-200">
+              👨🏻 اختيار الزوج اليوم
+            </span>
+            <span className="block truncate text-[11px] font-extrabold text-white">
+              {malePickToday ? malePickToday.targetLabel : 'لم يلف بعد'}
+            </span>
+          </div>
+
+          <div
+            className={`rounded-xl border px-2 py-1 text-center transition ${
+              isDrawShuffling && drawHighlight === 'female'
+                ? 'border-amber-300 bg-amber-500/40 scale-[1.03]'
+                : todayFinalDraw?.status === 'revealed' &&
+                    todayFinalDraw.chosenRole === 'female'
+                  ? 'border-emerald-300 bg-emerald-600/40'
+                  : 'border-rose-300/30 bg-black/30'
+            }`}
+          >
+            <span className="block text-[10px] font-bold text-rose-200">
+              👩🏻 اختيار الزوجة اليوم
+            </span>
+            <span className="block truncate text-[11px] font-extrabold text-white">
+              {femalePickToday ? femalePickToday.targetLabel : 'لم تلف بعد'}
+            </span>
+          </div>
+        </div>
       </div>
 
       {/* Circular SVG Wheel */}
       <div className="relative flex items-center justify-center my-auto">
-        {/* Top Pointer */}
         <div
           className="absolute -top-3 left-1/2 z-20 -translate-x-1/2 drop-shadow-[0_4px_8px_rgba(0,0,0,0.6)]"
           aria-hidden="true"
         >
-          <svg width="30" height="34" viewBox="0 0 30 34" fill="none">
+          <svg width="28" height="32" viewBox="0 0 30 34" fill="none">
             <path
               d="M15 33L3 8C1.5 4.5 4 1 8 1H22C26 1 28.5 4.5 27 8L15 33Z"
               fill="#FDE68A"
@@ -195,8 +371,7 @@ export const SpinWheelTab: React.FC<SpinWheelTabProps> = ({
           </svg>
         </div>
 
-        {/* Outer Glow Ring */}
-        <div className="relative h-[265px] w-[265px] sm:h-[310px] sm:w-[310px] rounded-full p-2 bg-gradient-to-br from-amber-300/40 via-rose-500/40 to-amber-500/40 shadow-[0_0_40px_rgba(225,29,72,0.35)]">
+        <div className="relative h-[225px] w-[225px] sm:h-[265px] sm:w-[265px] rounded-full p-2 bg-gradient-to-br from-amber-300/40 via-rose-500/40 to-amber-500/40 shadow-[0_0_36px_rgba(225,29,72,0.35)]">
           <svg
             viewBox="0 0 200 200"
             className="h-full w-full rounded-full overflow-visible"
@@ -242,7 +417,6 @@ export const SpinWheelTab: React.FC<SpinWheelTabProps> = ({
               );
             })}
 
-            {/* Rim pegs */}
             {safeSegments.map((_, idx) => {
               const angle = ((idx * sliceDeg - 90) * Math.PI) / 180;
               const px = 100 + 93 * Math.cos(angle);
@@ -262,27 +436,114 @@ export const SpinWheelTab: React.FC<SpinWheelTabProps> = ({
           {/* Center Spin Hub */}
           <button
             type="button"
-            disabled={isAnimating}
+            disabled={isAnimating || hasSpunToday}
             onClick={handleSpin}
-            className="absolute top-1/2 left-1/2 z-10 flex h-16 w-16 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-full border-2 border-amber-200 bg-gradient-to-br from-rose-600 to-rose-900 text-white shadow-xl hover:scale-105 active:scale-95 transition disabled:opacity-75"
+            className="absolute top-1/2 left-1/2 z-10 flex h-14 w-14 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-full border-2 border-amber-200 bg-gradient-to-br from-rose-600 to-rose-900 text-white shadow-xl hover:scale-105 active:scale-95 transition disabled:opacity-70"
           >
-            <RotateCw className={`h-5 w-5 ${isAnimating ? 'animate-spin' : ''}`} />
-            <span className="text-[10px] font-extrabold mt-0.5">دوران</span>
+            {hasSpunToday ? (
+              <Lock className="h-4 w-4" />
+            ) : (
+              <RotateCw className={`h-4 w-4 ${isAnimating ? 'animate-spin' : ''}`} />
+            )}
+            <span className="text-[9px] font-extrabold mt-0.5">
+              {hasSpunToday ? 'تم اليوم' : 'دوران'}
+            </span>
           </button>
         </div>
       </div>
 
-      {/* Primary Spin CTA */}
-      <button
-        type="button"
-        disabled={isAnimating}
-        onClick={handleSpin}
-        className="w-full max-w-xs min-h-[46px] rounded-2xl bg-gradient-to-r from-rose-600 to-rose-500 px-6 py-2.5 text-sm font-extrabold text-white shadow-lg shadow-rose-950/60 hover:from-rose-500 hover:to-rose-400 active:scale-[0.98] transition disabled:opacity-60"
-      >
-        {isAnimating ? 'جاري السحب...' : 'أدر عجلة الحظ'}
-      </button>
+      {/* Bottom Action Controls */}
+      <div className="w-full max-w-sm space-y-1.5">
+        {todayFinalDraw?.status === 'revealed' && !isDrawShuffling && (
+          <div className="rounded-xl border border-amber-300/45 bg-gradient-to-r from-rose-700/75 via-amber-600/55 to-rose-700/75 px-3 py-1.5 text-center text-xs font-extrabold text-white shadow">
+            ✨ الاختيار النهائي لليوم:{' '}
+            <span className="text-amber-200">{todayFinalDraw.chosenLabel}</span>
+          </div>
+        )}
 
-      {/* Result Modal */}
+        {!hasSpunToday ? (
+          <button
+            type="button"
+            disabled={isAnimating}
+            onClick={handleSpin}
+            className="w-full min-h-[42px] rounded-2xl bg-gradient-to-r from-rose-600 to-rose-500 px-5 py-2 text-xs sm:text-sm font-extrabold text-white shadow-lg hover:from-rose-500 hover:to-rose-400 active:scale-[0.98] transition disabled:opacity-60"
+          >
+            {isAnimating ? 'جاري السحب...' : 'أدر عجلة الحظ (فرصتك اليومية)'}
+          </button>
+        ) : bothSpunToday ? (
+          <button
+            type="button"
+            disabled={isDrawShuffling || isAnimating}
+            onClick={handleStartFinalRandomDraw}
+            className="flex w-full min-h-[42px] items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-amber-500 to-rose-600 px-4 py-2 text-xs sm:text-sm font-extrabold text-white shadow-lg hover:from-amber-400 hover:to-rose-500 active:scale-[0.98] transition disabled:opacity-60"
+          >
+            <Shuffle className={`h-4 w-4 ${isDrawShuffling ? 'animate-spin' : ''}`} />
+            <span>
+              {isDrawShuffling
+                ? 'جاري التبديل بين اختيار الزوج والزوجة...'
+                : 'اختيار عشوائي من نتيجة الزوج والزوجة'}
+            </span>
+          </button>
+        ) : (
+          <div className="flex w-full min-h-[40px] items-center justify-center gap-1.5 rounded-2xl border border-rose-300/25 bg-black/35 px-3 py-1.5 text-[11px] font-bold text-rose-100">
+            <Sparkles className="h-3.5 w-3.5 text-amber-300 shrink-0" />
+            <span>
+              استخدمت دورتك اليوم ({myPickToday?.targetLabel}) · بانتظار دوران{' '}
+              {role === 'male' ? 'الزوجة' : 'الزوج'}
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* 3-Second Alternation Full Focus Overlay */}
+      <AnimatePresence>
+        {isDrawShuffling && malePickToday && femalePickToday && (
+          <motion.div
+            initial={{opacity: 0}}
+            animate={{opacity: 1}}
+            exit={{opacity: 0}}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-md"
+          >
+            <div className="w-full max-w-sm rounded-3xl border border-amber-300/45 bg-[#200611]/95 p-5 text-center text-white shadow-2xl space-y-3">
+              <p className="text-xs font-extrabold text-amber-200">
+                جاري الاختيار العشوائي بين نتيجة الزوج والزوجة...
+              </p>
+              <div className="grid grid-cols-2 gap-2.5">
+                <div
+                  className={`rounded-2xl border-2 p-3 transition ${
+                    drawHighlight === 'male'
+                      ? 'border-amber-300 bg-sky-600/80 scale-105 shadow-xl'
+                      : 'border-white/15 bg-black/40 opacity-55'
+                  }`}
+                >
+                  <span className="block text-[11px] font-bold text-sky-100">
+                    👨🏻 الزوج
+                  </span>
+                  <span className="mt-1 block text-sm font-extrabold text-white">
+                    {malePickToday.targetLabel}
+                  </span>
+                </div>
+                <div
+                  className={`rounded-2xl border-2 p-3 transition ${
+                    drawHighlight === 'female'
+                      ? 'border-amber-300 bg-rose-600/80 scale-105 shadow-xl'
+                      : 'border-white/15 bg-black/40 opacity-55'
+                  }`}
+                >
+                  <span className="block text-[11px] font-bold text-rose-100">
+                    👩🏻 الزوجة
+                  </span>
+                  <span className="mt-1 block text-sm font-extrabold text-white">
+                    {femalePickToday.targetLabel}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Single Spin Result Modal */}
       <AnimatePresence>
         {showResultModal && wheelState && (
           <motion.div
@@ -298,7 +559,7 @@ export const SpinWheelTab: React.FC<SpinWheelTabProps> = ({
               className="w-full max-w-sm rounded-3xl border border-rose-300/30 bg-[#230612]/95 p-5 text-center text-white shadow-2xl"
             >
               <p className="text-xs font-semibold text-rose-300 mb-1">
-                نتيجة عجلة الحظ ({wheelState.spunBy === 'male' ? 'أدارها الذكر' : 'أدارتها الأنثى'})
+                نتيجة عجلة الحظ ({wheelState.spunBy === 'male' ? 'أدارها الزوج' : 'أدارتها الزوجة'})
               </p>
               <div className="my-3 rounded-2xl border border-amber-300/30 bg-rose-900/55 px-4 py-5 text-xl font-extrabold text-amber-200 shadow-inner">
                 {wheelState.targetLabel}
@@ -333,15 +594,15 @@ export const SpinWheelTab: React.FC<SpinWheelTabProps> = ({
                     }`}
                   >
                     {wheelState.status === 'accepted'
-                      ? `تم قبول النتيجة بواسطة ${wheelState.respondedBy === 'male' ? 'الذكر' : 'الأنثى'} ❤️`
-                      : `تم رفض النتيجة بواسطة ${wheelState.respondedBy === 'male' ? 'الذكر' : 'الأنثى'}`}
+                      ? `تم قبول النتيجة بواسطة ${wheelState.respondedBy === 'male' ? 'الزوج' : 'الزوجة'} ❤️`
+                      : `تم رفض النتيجة بواسطة ${wheelState.respondedBy === 'male' ? 'الزوج' : 'الزوجة'}`}
                   </p>
                   <button
                     type="button"
                     onClick={handleCloseModal}
                     className="w-full min-h-[42px] rounded-2xl bg-white/15 px-4 py-2 text-xs font-bold text-white hover:bg-white/25 transition"
                   >
-                    إغلاق ولعب جولة جديدة
+                    إغلاق
                   </button>
                 </div>
               )}

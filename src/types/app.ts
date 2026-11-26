@@ -67,6 +67,25 @@ export interface PartnerPresenceData {
   pingId?: string;
 }
 
+export interface DailyWheelPick {
+  dayKey: string;
+  role: PartnerRole;
+  targetIndex: number;
+  targetLabel: string;
+  spunAt: number;
+}
+
+export interface WheelFinalDraw {
+  drawId: string;
+  dayKey: string;
+  maleLabel: string;
+  femaleLabel: string;
+  chosenRole: PartnerRole;
+  chosenLabel: string;
+  startedAt: number;
+  status: 'shuffling' | 'revealed';
+}
+
 export interface WheelLiveState {
   spinId: string;
   spunBy: PartnerRole;
@@ -76,6 +95,10 @@ export interface WheelLiveState {
   status: 'idle' | 'spinning' | 'awaiting_response' | 'accepted' | 'rejected';
   respondedBy?: PartnerRole;
   timestamp: number;
+  dayKey?: string;
+  maleDailyPick?: DailyWheelPick | null;
+  femaleDailyPick?: DailyWheelPick | null;
+  finalDraw?: WheelFinalDraw | null;
 }
 
 export interface QuizAnswerRecord {
@@ -109,6 +132,7 @@ export interface ReactionEvent {
   type: 'happy' | 'sad' | 'kiss';
   triggeredBy: PartnerRole;
   label?: string;
+  source?: 'ping' | 'card' | 'quiz';
   timestamp: number;
 }
 

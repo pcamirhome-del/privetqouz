@@ -270,9 +270,7 @@ export async function connectOrCreateRoom(
     }
 
     if (!decrypted || !matchedCipherKey) {
-      throw new Error(
-        'الرمز السري غير صحيح لهذه الغرفة. (الافتراضي: الزوج 0000، الزوجة 1111)'
-      );
+      throw new Error('الرمز السري غير صحيح لهذه الغرفة.');
     }
 
     const malePin = decrypted.malePasscode || DEFAULT_MALE_PASSCODE;
@@ -286,9 +284,7 @@ export async function connectOrCreateRoom(
       } else if (pin === decrypted.passcode) {
         resolvedRole = 'male';
       } else {
-        throw new Error(
-          'الرمز السري غير صحيح لهذه الغرفة. (الافتراضي: الزوج 0000، الزوجة 1111)'
-        );
+        throw new Error('الرمز السري غير صحيح لهذه الغرفة.');
       }
     } else if (
       (resolvedRole === 'male' && pin !== malePin) ||
@@ -339,7 +335,7 @@ export async function connectOrCreateRoom(
 
   // Room does not exist yet -> only default Male (0000) or Female (1111) creates it
   if (pin !== DEFAULT_MALE_PASSCODE && pin !== DEFAULT_FEMALE_PASSCODE) {
-    throw new Error('الرمز السري غير صحيح. رمز الزوج 0000 ورمز الزوجة 1111.');
+    throw new Error('الرمز السري غير صحيح.');
   }
 
   const role: PartnerRole = pin === DEFAULT_FEMALE_PASSCODE ? 'female' : 'male';

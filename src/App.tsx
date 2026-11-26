@@ -4,8 +4,8 @@ import {
   BellRing,
   Disc3,
   HeartHandshake,
-  HelpCircle,
   Images,
+  LogOut,
   Settings,
   Sparkles,
   Volume2,
@@ -58,12 +58,14 @@ import {ErrorBoundary} from './components/ErrorBoundary';
 import {LoginScreen} from './components/LoginScreen';
 import {RomanticFloatingLayer} from './components/RomanticFloatingLayer';
 import {
+  CenterKissMessageOverlay,
   ClappingHandsOverlay,
   EntranceCharacterOverlay,
   ReactionPopupOverlay,
 } from './components/AnimatedCharacter';
 import {SpinWheelTab} from './components/SpinWheelTab';
-import {QuizTab} from './components/QuizTab';
+// QuizTab retained safely in codebase while hidden from top navigation UI
+// import {QuizTab} from './components/QuizTab';
 import {PhotosTab} from './components/PhotosTab';
 import {MysteryCardsTab} from './components/MysteryCardsTab';
 import {PartnerSyncTab} from './components/PartnerSyncTab';
@@ -112,6 +114,7 @@ function MainAppContent() {
 
   const lastReactionIdRef = useRef<string | null>(null);
   const lastWinWheelIdRef = useRef<string | null>(null);
+  const lastWinDrawIdRef = useRef<string | null>(null);
   const lastWinQuizIdRef = useRef<string | null>(null);
   const clapTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fetchedPhotoIdsRef = useRef<Set<string>>(new Set());
@@ -249,7 +252,7 @@ function MainAppContent() {
         }
         setTimeout(() => {
           setActiveReaction((curr) => (curr?.id === evt.id ? null : curr));
-        }, 2800);
+        }, evt.source === 'ping' ? 4500 : 2800);
       }
     );
 
@@ -283,7 +286,7 @@ function MainAppContent() {
     };
   }, [session]);
 
-  // Trigger center-screen clapping hands on game wins (Quiz round win / Spin Wheel accepted)
+  // Trigger center-screen clapping hands on game wins (Quiz round win / Spin Wheel accepted / Final random draw)
   useEffect(() => {
     if (!session || !wheelState) return;
     if (
@@ -293,6 +296,14 @@ function MainAppContent() {
     ) {
       lastWinWheelIdRef.current = wheelState.spinId;
       triggerClap(`مبروك الفوز: ${wheelState.targetLabel} 👏`);
+    }
+    if (
+      wheelState.finalDraw?.status === 'revealed' &&
+      wheelState.finalDraw.drawId !== lastWinDrawIdRef.current &&
+      Date.now() - (wheelState.finalDraw.startedAt || 0) < 15000
+    ) {
+      lastWinDrawIdRef.current = wheelState.finalDraw.drawId;
+      triggerClap(`الاختيار العشوائي: ${wheelState.finalDraw.chosenLabel} 👏`);
     }
   }, [session, wheelState, triggerClap]);
 
@@ -513,9 +524,13 @@ function MainAppContent() {
         lastSeen: Date.now(),
       }).catch(() => {});
     }
-    setSession(null);
+    setPartnerModalOpen(false);
     setSettingsOpen(false);
     setShowEntrance(false);
+    setActiveReaction(null);
+    setClapLabel(null);
+    setPeriodicReminderVisible(false);
+    setSession(null);
   };
 
   if (!session) {
@@ -599,6 +614,16 @@ function MainAppContent() {
         <header className="relative flex h-10 shrink-0 items-center justify-between gap-2 rounded-2xl border border-rose-300/25 bg-black/50 px-2 backdrop-blur-xl shadow-lg">
           {/* Top-Left Controls (forced left position in RTL via order/dir) */}
           <div className="flex items-center gap-1 shrink-0 order-last">
+            {/* Active Account Role Badge (الزوج / الزوجة) */}
+            <span
+              className={`flex h-7 items-center rounded-xl border px-2 text-[11px] font-extrabold shadow-sm ${
+                session.role === 'male'
+                  ? 'border-sky-300/45 bg-sky-500/25 text-sky-100'
+                  : 'border-pink-300/45 bg-pink-500/25 text-pink-100'
+              }`}
+            >
+              {session.role === 'male' ? 'الزوج' : 'الزوجة'}
+            </span>
             <button
               type="button"
               onClick={() => setPartnerModalOpen(true)}
@@ -631,9 +656,19 @@ function MainAppContent() {
               type="button"
               onClick={() => setSettingsOpen(true)}
               aria-label="الإعدادات"
+              title="الإعدادات"
               className="flex h-8 w-8 items-center justify-center rounded-xl bg-rose-600/80 text-white hover:bg-rose-500 transition shadow"
             >
               <Settings className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={handleSignOut}
+              aria-label="تسجيل الخروج"
+              title="تسجيل الخروج"
+              className="flex h-8 w-8 items-center justify-center rounded-xl border border-rose-300/35 bg-rose-950/75 text-rose-100 hover:bg-red-600 hover:text-white transition shadow"
+            >
+              <LogOut className="h-4 w-4" />
             </button>
           </div>
 
@@ -654,12 +689,11 @@ function MainAppContent() {
           )}
         </header>
 
-        {/* Single-Row 4-Tab Navigation Bar */}
-        <nav className="mt-2 grid grid-cols-4 gap-1.5 shrink-0">
+        {/* Single-Row 3-Tab Navigation Bar */}
+        <nav className="mt-2 grid grid-cols-3 gap-1.5 shrink-0">
           {(
             [
               {id: 'wheel' as MainTab, label: 'عجلة الحظ', Icon: Disc3},
-              {id: 'quiz' as MainTab, label: 'مسابقة', Icon: HelpCircle},
               {id: 'photos' as MainTab, label: 'صور عشوائية', Icon: Images},
               {id: 'cards' as MainTab, label: 'كروت الحظ', Icon: Sparkles},
             ] as const
@@ -692,7 +726,7 @@ function MainAppContent() {
 
         {/* Active Tab Viewport Container */}
         <main className="mt-1.5 flex-1 min-h-0 overflow-hidden rounded-3xl border border-rose-200/20 bg-black/15 p-2.5 sm:p-3.5 backdrop-blur-[2px] shadow-xl">
-          {activeTab === 'wheel' && (
+          {(activeTab === 'wheel' || activeTab === 'quiz') && (
             <SpinWheelTab
               role={session.role}
               segments={settings.wheelSegments}
@@ -703,7 +737,8 @@ function MainAppContent() {
             />
           )}
 
-          {activeTab === 'quiz' && (
+          {/* Quiz Tab intentionally hidden from UI while keeping QuizTab logic safely in codebase */}
+          {/* {activeTab === 'quiz' && (
             <QuizTab
               role={session.role}
               settings={settings}
@@ -716,7 +751,7 @@ function MainAppContent() {
                 writeLiveState(session.roomId, session.pin, 'reaction', evt)
               }
             />
-          )}
+          )} */}
 
           {activeTab === 'photos' && (
             <PhotosTab
@@ -777,6 +812,7 @@ function MainAppContent() {
                   });
                   await writeLiveState(session.roomId, session.pin, 'reaction', evt);
                 }}
+                onAfterSend={() => setPartnerModalOpen(false)}
               />
             </div>
           </div>
@@ -824,9 +860,22 @@ function MainAppContent() {
         )}
       </AnimatePresence>
 
-      {/* Synced Transparent Reaction Popup Overlay (Happy / Sad / Kiss) */}
+      {/* Center-Screen Princess with Sent Kiss Ping Message in front of her hand */}
+      <CenterKissMessageOverlay
+        active={Boolean(
+          activeReaction?.type === 'kiss' && activeReaction?.source === 'ping'
+        )}
+        message={activeReaction?.label}
+        role={activeReaction?.triggeredBy || session.role}
+      />
+
+      {/* Synced Transparent Reaction Popup Overlay (Happy / Sad / Card Kiss) */}
       <ReactionPopupOverlay
-        type={activeReaction?.type || null}
+        type={
+          activeReaction?.source === 'ping'
+            ? null
+            : activeReaction?.type || null
+        }
         label={activeReaction?.label}
         role={activeReaction?.triggeredBy || session.role}
       />

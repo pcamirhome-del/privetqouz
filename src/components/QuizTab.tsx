@@ -2,6 +2,7 @@ import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {
   Award,
   Clock,
+  Eye,
   Play,
   RefreshCw,
   Sparkles,
@@ -59,7 +60,9 @@ export const QuizTab: React.FC<QuizTabProps> = ({
   const unseenCount = useMemo(() => {
     const asked = new Set(settings.askedQuestionIds || []);
     return allQuestions.filter((q) =>
-      selectedCategory === 'all' ? !asked.has(q.id) : q.category === selectedCategory && !asked.has(q.id)
+      selectedCategory === 'all'
+        ? !asked.has(q.id)
+        : q.category === selectedCategory && !asked.has(q.id)
     ).length;
   }, [allQuestions, settings.askedQuestionIds, selectedCategory]);
 
@@ -91,18 +94,21 @@ export const QuizTab: React.FC<QuizTabProps> = ({
       ? quizState.questions[quizState.currentIndex]
       : undefined;
 
-  const myAnswer =
+  // Alternating turns: even questions -> Husband (male), odd questions -> Wife (female)
+  const activeTurn: PartnerRole =
     quizState && quizState.status === 'playing'
-      ? role === 'male'
+      ? quizState.currentIndex % 2 === 0
+        ? 'male'
+        : 'female'
+      : 'male';
+
+  const isMyTurn = role === activeTurn;
+
+  const turnAnswer =
+    quizState && quizState.status === 'playing'
+      ? activeTurn === 'male'
         ? quizState.maleAnswers?.[quizState.currentIndex]
         : quizState.femaleAnswers?.[quizState.currentIndex]
-      : undefined;
-
-  const partnerAnswer =
-    quizState && quizState.status === 'playing'
-      ? role === 'male'
-        ? quizState.femaleAnswers?.[quizState.currentIndex]
-        : quizState.maleAnswers?.[quizState.currentIndex]
       : undefined;
 
   // Auto-advance when timer hits 0 (startedBy client acts as coordinator to avoid double-writes)
@@ -113,7 +119,7 @@ export const QuizTab: React.FC<QuizTabProps> = ({
 
     const timer = setTimeout(() => {
       handleAdvanceQuestion();
-    }, 600);
+    }, 800);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [secondsLeft, quizState?.status, quizState?.currentIndex]);
@@ -196,7 +202,8 @@ export const QuizTab: React.FC<QuizTabProps> = ({
 
   const handleSelectOption = async (optionIdx: number) => {
     if (!quizState || quizState.status !== 'playing' || !currentQuestion) return;
-    if (myAnswer || secondsLeft <= 0) return;
+    // Strictly lock answering to the active turn partner only!
+    if (!isMyTurn || turnAnswer || secondsLeft <= 0) return;
 
     const isCorrect = optionIdx === currentQuestion.correctIndex;
     const idx = quizState.currentIndex;
@@ -209,11 +216,11 @@ export const QuizTab: React.FC<QuizTabProps> = ({
     };
 
     const nextMaleAnswers =
-      role === 'male'
+      activeTurn === 'male'
         ? {...(quizState.maleAnswers || {}), [idx]: record}
         : quizState.maleAnswers || {};
     const nextFemaleAnswers =
-      role === 'female'
+      activeTurn === 'female'
         ? {...(quizState.femaleAnswers || {}), [idx]: record}
         : quizState.femaleAnswers || {};
 
@@ -226,17 +233,7 @@ export const QuizTab: React.FC<QuizTabProps> = ({
       soundEngine.playSad();
     }
 
-    // Trigger transparent animated character popup on BOTH screens simultaneously
-    await onTriggerReaction({
-      id: `react_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      type: isCorrect ? 'happy' : 'sad',
-      triggeredBy: role,
-      label: isCorrect
-        ? `إجابة صحيحة! (${role === 'male' ? 'الذكر' : 'الأنثى'}) 💋`
-        : `إجابة خاطئة (${role === 'male' ? 'الذكر' : 'الأنثى'})`,
-      timestamp: Date.now(),
-    });
-
+    // Update quiz state immediately so the watching partner sees the chosen answer live
     await onUpdateQuiz({
       ...quizState,
       maleScore: nextMaleScore,
@@ -245,6 +242,17 @@ export const QuizTab: React.FC<QuizTabProps> = ({
       femaleAnswers: nextFemaleAnswers,
       updatedAt: Date.now(),
     });
+
+    await onTriggerReaction({
+      id: `react_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      type: isCorrect ? 'happy' : 'sad',
+      triggeredBy: role,
+      source: 'quiz',
+      label: isCorrect
+        ? `إجابة صحيحة! (${role === 'male' ? 'الزوج' : 'الزوجة'}) 💋`
+        : `إجابة خاطئة (${role === 'male' ? 'الزوج' : 'الزوجة'})`,
+      timestamp: Date.now(),
+    }).catch(() => {});
   };
 
   const handleAdvanceQuestion = async () => {
@@ -302,11 +310,33 @@ export const QuizTab: React.FC<QuizTabProps> = ({
   };
 
   if (quizState?.status === 'playing' && currentQuestion) {
-    const bothAnswered = Boolean(myAnswer && partnerAnswer);
     return (
       <div className="flex h-full w-full flex-col justify-between gap-2 py-1">
-        {/* Top Scoreboard & Timer */}
-        <div className="flex items-center justify-between gap-2 rounded-2xl border border-rose-200/25 bg-black/20 px-3 py-2 backdrop-blur-[2px] [text-shadow:0_1px_2px_rgba(0,0,0,0.95)]">
+        {/* Top Turn Alert Banner: سؤال الزوج / سؤال الزوجة */}
+        <div
+          className={`flex items-center justify-between gap-2 rounded-2xl border px-3 py-1.5 shadow ${
+            activeTurn === 'male'
+              ? 'border-sky-300/50 bg-sky-900/65 text-sky-50'
+              : 'border-rose-300/50 bg-rose-800/65 text-rose-50'
+          }`}
+        >
+          <span className="text-xs sm:text-sm font-extrabold">
+            {activeTurn === 'male' ? '👨🏻 سؤال الزوج' : '👩🏻 سؤال الزوجة'}
+          </span>
+          <span className="flex items-center gap-1 rounded-xl bg-black/30 px-2 py-0.5 text-[10px] sm:text-xs font-bold">
+            {isMyTurn ? (
+              <span className="text-amber-200">دورك للإجابة الآن!</span>
+            ) : (
+              <>
+                <Eye className="h-3 w-3 text-amber-200" />
+                <span>مشاهدة لحظية فقط</span>
+              </>
+            )}
+          </span>
+        </div>
+
+        {/* Scoreboard & Timer */}
+        <div className="flex items-center justify-between gap-2 rounded-2xl border border-rose-200/25 bg-black/20 px-3 py-1.5 backdrop-blur-[2px] [text-shadow:0_1px_2px_rgba(0,0,0,0.95)]">
           <div className="flex items-center gap-2 text-xs font-bold">
             <span className="text-sky-300">👨🏻 {quizState.maleScore}</span>
             <span className="text-rose-200/70">·</span>
@@ -329,9 +359,9 @@ export const QuizTab: React.FC<QuizTabProps> = ({
           </div>
         </div>
 
-        {/* Question Card */}
-        <div className="flex-1 flex flex-col justify-center rounded-2xl border border-rose-200/25 bg-black/20 p-3.5 backdrop-blur-[2px] [text-shadow:0_1px_2px_rgba(0,0,0,0.95)]">
-          <div className="flex items-center justify-between text-[11px] text-rose-200/75 mb-2">
+        {/* Question Card (Live visible to both Husband and Wife) */}
+        <div className="flex-1 flex flex-col justify-center rounded-2xl border border-rose-200/25 bg-black/20 p-3 backdrop-blur-[2px] [text-shadow:0_1px_2px_rgba(0,0,0,0.95)]">
+          <div className="flex items-center justify-between text-[11px] text-rose-200/75 mb-1.5">
             <span>
               {currentQuestion.category === 'arts'
                 ? 'فنية'
@@ -347,28 +377,29 @@ export const QuizTab: React.FC<QuizTabProps> = ({
                   : 'صعب'}
             </span>
           </div>
-          <h3 className="text-sm sm:text-base font-extrabold leading-relaxed text-white text-center mb-3">
+          <h3 className="text-sm sm:text-base font-extrabold leading-relaxed text-white text-center mb-2.5">
             {currentQuestion.question}
           </h3>
 
           <div className="grid grid-cols-1 gap-2">
             {currentQuestion.options.map((opt, idx) => {
-              const isMine = myAnswer?.selectedOption === idx;
+              const isSelectedByTurn = turnAnswer?.selectedOption === idx;
               const isCorrectOpt = idx === currentQuestion.correctIndex;
-              const reveal = Boolean(myAnswer) || secondsLeft <= 0;
+              const reveal = Boolean(turnAnswer) || secondsLeft <= 0;
 
               let btnClass =
                 'border-rose-200/25 bg-black/25 text-white hover:bg-rose-500/35 [text-shadow:0_1px_2px_rgba(0,0,0,0.95)]';
+              if (!isMyTurn && !reveal) {
+                btnClass =
+                  'border-rose-200/15 bg-black/20 text-rose-100/80 cursor-not-allowed';
+              }
               if (reveal) {
                 if (isCorrectOpt) {
-                  btnClass =
-                    'border-emerald-400 bg-emerald-600/85 text-white';
-                } else if (isMine && !isCorrectOpt) {
-                  btnClass =
-                    'border-rose-400 bg-rose-700/85 text-white';
+                  btnClass = 'border-emerald-400 bg-emerald-600/85 text-white';
+                } else if (isSelectedByTurn && !isCorrectOpt) {
+                  btnClass = 'border-rose-400 bg-rose-700/85 text-white';
                 } else {
-                  btnClass =
-                    'border-white/15 bg-black/20 text-rose-100/80';
+                  btnClass = 'border-white/15 bg-black/20 text-rose-100/80';
                 }
               }
 
@@ -376,11 +407,16 @@ export const QuizTab: React.FC<QuizTabProps> = ({
                 <button
                   key={idx}
                   type="button"
-                  disabled={Boolean(myAnswer) || secondsLeft <= 0}
+                  disabled={!isMyTurn || Boolean(turnAnswer) || secondsLeft <= 0}
                   onClick={() => handleSelectOption(idx)}
-                  className={`min-h-[44px] w-full rounded-xl border px-3 py-2 text-right text-xs sm:text-sm font-bold transition active:scale-[0.99] ${btnClass}`}
+                  className={`flex min-h-[42px] w-full items-center justify-between gap-2 rounded-xl border px-3 py-2 text-right text-xs sm:text-sm font-bold transition active:scale-[0.99] ${btnClass}`}
                 >
-                  {opt}
+                  <span>{opt}</span>
+                  {reveal && isSelectedByTurn && (
+                    <span className="shrink-0 rounded-lg bg-black/35 px-1.5 py-0.5 text-[10px] font-extrabold text-amber-200">
+                      {activeTurn === 'male' ? 'اختيار الزوج' : 'اختيار الزوجة'}
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -389,14 +425,16 @@ export const QuizTab: React.FC<QuizTabProps> = ({
 
         {/* Bottom Advance Bar */}
         <div className="flex items-center justify-between gap-2">
-          <span className="text-[11px] text-rose-200/80">
-            {bothAnswered
-              ? 'أجاب الشريكان!'
-              : myAnswer
-                ? 'تم تسجيل إجابتك · بانتظار الشريك'
-                : 'اختر الإجابة الصحيحة خلال 30 ثانية'}
+          <span className="text-[11px] font-semibold text-rose-100">
+            {turnAnswer
+              ? turnAnswer.isCorrect
+                ? `أجاب ${activeTurn === 'male' ? 'الزوج' : 'الزوجة'} إجابة صحيحة!`
+                : `أجاب ${activeTurn === 'male' ? 'الزوج' : 'الزوجة'} إجابة خاطئة`
+              : isMyTurn
+                ? 'اختر الإجابة الصحيحة خلال 30 ثانية'
+                : `بانتظار إجابة ${activeTurn === 'male' ? 'الزوج' : 'الزوجة'}...`}
           </span>
-          {(myAnswer || secondsLeft <= 0) && (
+          {(turnAnswer || secondsLeft <= 0) && (
             <button
               type="button"
               onClick={handleAdvanceQuestion}
@@ -419,8 +457,8 @@ export const QuizTab: React.FC<QuizTabProps> = ({
       quizState.winnerRole === 'tie'
         ? 'تعادل رائع بينكما!'
         : quizState.winnerRole === 'male'
-          ? 'الفائز: الذكر 👨🏻'
-          : 'الفائزة: الأنثى 👩🏻';
+          ? 'الفائز: الزوج 👨🏻'
+          : 'الفائزة: الزوجة 👩🏻';
 
     return (
       <div className="flex h-full w-full flex-col justify-between gap-2 py-1 inner-scroll">
@@ -429,10 +467,10 @@ export const QuizTab: React.FC<QuizTabProps> = ({
           <h3 className="text-base font-extrabold text-white">{winnerLabel}</h3>
           <div className="mt-2 flex items-center justify-center gap-6 text-sm font-bold">
             <span className="text-sky-300 font-mono-num">
-              👨🏻 {quizState.maleScore} / 10
+              👨🏻 {quizState.maleScore} / 5
             </span>
             <span className="text-rose-300 font-mono-num">
-              👩🏻 {quizState.femaleScore} / 10
+              👩🏻 {quizState.femaleScore} / 5
             </span>
           </div>
         </div>
@@ -491,8 +529,8 @@ export const QuizTab: React.FC<QuizTabProps> = ({
           <h2 className="text-sm font-extrabold">قوانين مسابقة التحدي</h2>
         </div>
         <ul className="space-y-1 text-[11px] sm:text-xs text-white leading-relaxed">
-          <li>• 10 أسئلة عشوائية متجددة في كل جولة (30 ثانية لكل سؤال).</li>
-          <li>• الشريك صاحب الإجابات الصحيحة الأكثر يفوز بالجولة.</li>
+          <li>• 10 أسئلة بالتناوب: سؤال للزوج وسؤال للزوجة (5 لكل شريك).</li>
+          <li>• يشاهد الشريك الآخر السؤال والإجابة المختارة لحظياً دون تدخل.</li>
           <li>• تحدٍ إلزامي: يختار الخاسر وينفذ أحد خيارات الفائز فوراً.</li>
         </ul>
       </div>

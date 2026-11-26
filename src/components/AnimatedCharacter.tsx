@@ -535,3 +535,78 @@ export const ReactionPopupOverlay: React.FC<{
     </AnimatePresence>
   );
 };
+
+export const CenterKissMessageOverlay: React.FC<{
+  active: boolean;
+  message?: string;
+  role?: PartnerRole;
+}> = ({active, message, role = 'female'}) => {
+  return (
+    <AnimatePresence>
+      {active && (
+        <motion.div
+          initial={{opacity: 0, scale: 0.72, y: 16}}
+          animate={{opacity: 1, scale: 1, y: 0}}
+          exit={{opacity: 0, scale: 0.78, y: -12}}
+          transition={{duration: 0.34, ease: [0.16, 1, 0.3, 1]}}
+          className="pointer-events-none fixed inset-0 z-[70] flex items-center justify-center px-3"
+        >
+          <div
+            dir="ltr"
+            className="relative flex max-w-[92vw] items-center justify-center"
+          >
+            {/* Floating Hearts & Kisses around the center Princess */}
+            <div className="pointer-events-none absolute inset-0">
+              {[0, 1, 2, 3, 4, 5].map((i) => (
+                <motion.span
+                  key={i}
+                  initial={{opacity: 0, scale: 0.4, y: 10, x: 0}}
+                  animate={{
+                    opacity: [0, 1, 0],
+                    scale: [0.65, 1.35, 0.9],
+                    y: -60 - i * 14,
+                    x: (i % 2 === 0 ? -1 : 1) * (18 + i * 10),
+                  }}
+                  transition={{duration: 1.9, delay: i * 0.14, repeat: Infinity}}
+                  className="absolute left-1/2 top-6 text-xl sm:text-2xl"
+                >
+                  {i % 2 === 0 ? '💋' : '❤️'}
+                </motion.span>
+              ))}
+            </div>
+
+            {/* Sent Message Card positioned directly in front of her raised gloved hand */}
+            {message && (
+              <motion.div
+                dir="rtl"
+                initial={{opacity: 0, x: 18, scale: 0.85}}
+                animate={{opacity: 1, x: 0, scale: 1, y: [0, -4, 0]}}
+                transition={{
+                  opacity: {duration: 0.25},
+                  scale: {duration: 0.28},
+                  y: {duration: 1.8, repeat: Infinity, ease: 'easeInOut'},
+                }}
+                className="relative -mr-3 z-10 max-w-[175px] sm:max-w-[220px] rounded-2xl border-2 border-amber-300/70 bg-gradient-to-br from-rose-600/95 via-rose-700/95 to-[#2b0716]/95 px-3.5 py-2.5 text-center shadow-[0_12px_35px_rgba(244,63,94,0.6)] backdrop-blur-xl"
+              >
+                <p className="text-[10px] font-bold text-amber-200 mb-0.5">
+                  {role === 'male' ? '👨🏻 همسة من الزوج' : '👩🏻 همسة من الزوجة'}
+                </p>
+                <p className="text-xs sm:text-sm font-extrabold text-white leading-snug break-words drop-shadow">
+                  {message}
+                </p>
+                {/* Pointer pointing directly toward her raised left hand */}
+                <span className="absolute top-1/2 -right-2 h-3.5 w-3.5 -translate-y-1/2 rotate-45 border-r-2 border-t-2 border-amber-300/70 bg-rose-700" />
+              </motion.div>
+            )}
+
+            {/* Center Disney Princess Character */}
+            <div className="relative h-48 w-36 sm:h-56 sm:w-44 shrink-0">
+              <DisneyPrincessSvg mood="happy" role={role} phase="kiss" />
+            </div>
+          </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+};
+

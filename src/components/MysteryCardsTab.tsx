@@ -1,6 +1,6 @@
 import React, {useEffect, useMemo, useState} from 'react';
 import confetti from 'canvas-confetti';
-import {Clock, Gift, Lock, Sparkles} from 'lucide-react';
+import {Clock, Gift, Sparkles} from 'lucide-react';
 import {
   DEFAULT_MYSTERY_CARDS,
   FlippedCardRecord,
@@ -47,22 +47,17 @@ function formatCountdown(ms: number): string {
   return `${h}:${m}:${s}`;
 }
 
-function pickFourCards(pool: MysteryCardItem[]): MysteryCardItem[] {
+function buildDynamicBoardSlots(pool: MysteryCardItem[]): MysteryCardItem[] {
   const source = pool.length > 0 ? [...pool] : [...DEFAULT_MYSTERY_CARDS];
-  // Fisher-Yates shuffle
+  // Fisher-Yates shuffle while preserving the exact number of configured options
   for (let i = source.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [source[i], source[j]] = [source[j], source[i]];
   }
-  const picked: MysteryCardItem[] = [];
-  for (let i = 0; i < 4; i++) {
-    const item = source[i % source.length];
-    picked.push({
-      id: `${item.id}_${i}`,
-      text: item.text,
-    });
-  }
-  return picked;
+  return source.map((item, i) => ({
+    id: `${item.id}_${i}`,
+    text: item.text,
+  }));
 }
 
 export const MysteryCardsTab: React.FC<MysteryCardsTabProps> = ({
@@ -94,21 +89,48 @@ export const MysteryCardsTab: React.FC<MysteryCardsTabProps> = ({
     [cardsPool]
   );
 
+  const poolSignature = useMemo(
+    () =>
+      [...effectivePool]
+        .map((c) => c.text.trim())
+        .sort()
+        .join('|'),
+    [effectivePool]
+  );
+
   const localFallbackSlots = useMemo(
-    () => pickFourCards(effectivePool),
-    // Re-deal only if dayKey changes or pool changes while no synced board exists for today
+    () => buildDynamicBoardSlots(effectivePool),
+    // Re-deal only if dayKey changes or pool changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [todayKey, effectivePool.map((c) => `${c.id}:${c.text}`).join('|')]
   );
 
   const isStateForToday = cardsState?.dayKey === todayKey;
-  const boardSlots =
-    isStateForToday && cardsState?.boardSlots?.length === 4
-      ? cardsState.boardSlots
-      : localFallbackSlots;
-
   const maleFlip = isStateForToday ? cardsState?.maleFlip || null : null;
   const femaleFlip = isStateForToday ? cardsState?.femaleFlip || null : null;
+
+  const syncedMatchesPool = useMemo(() => {
+    if (!isStateForToday || !cardsState?.boardSlots) return false;
+    if (cardsState.boardSlots.length !== effectivePool.length) return false;
+    if (maleFlip || femaleFlip) return true;
+    const syncedSig = [...cardsState.boardSlots]
+      .map((c) => c.text.trim())
+      .sort()
+      .join('|');
+    return syncedSig === poolSignature;
+  }, [
+    isStateForToday,
+    cardsState?.boardSlots,
+    effectivePool.length,
+    maleFlip,
+    femaleFlip,
+    poolSignature,
+  ]);
+
+  const boardSlots = syncedMatchesPool
+    ? cardsState!.boardSlots
+    : localFallbackSlots;
+
   const myFlip = role === 'male' ? maleFlip : femaleFlip;
   const partnerFlip = role === 'male' ? femaleFlip : maleFlip;
 
@@ -156,6 +178,7 @@ export const MysteryCardsTab: React.FC<MysteryCardsTabProps> = ({
       await onTriggerReaction({
         id: `card_${Date.now().toString(36)}`,
         type: 'kiss',
+        source: 'card',
         triggeredBy: role,
         label: chosenCard.text,
         timestamp: Date.now(),
@@ -210,8 +233,18 @@ export const MysteryCardsTab: React.FC<MysteryCardsTabProps> = ({
         )}
       </div>
 
-      {/* 2x2 3D Flip Cards Grid */}
-      <div className="grid flex-1 min-h-0 grid-cols-2 gap-2.5 py-0.5">
+      {/* Dynamic 3D Flip Cards Grid matching exact Settings card count */}
+      <div
+        className={`grid flex-1 min-h-0 gap-2 py-0.5 ${
+          boardSlots.length === 1
+            ? 'grid-cols-1'
+            : boardSlots.length === 2 || boardSlots.length === 4
+              ? 'grid-cols-2'
+              : boardSlots.length <= 6
+                ? 'grid-cols-3'
+                : 'grid-cols-3 sm:grid-cols-4 auto-rows-[minmax(84px,1fr)] overflow-y-auto inner-scroll'
+        }`}
+      >
         {boardSlots.map((card, idx) => {
           const flippedByMale = maleFlip?.slotIndex === idx ? maleFlip : null;
           const flippedByFemale = femaleFlip?.slotIndex === idx ? femaleFlip : null;
@@ -226,8 +259,8 @@ export const MysteryCardsTab: React.FC<MysteryCardsTabProps> = ({
               disabled={!canClick}
               onClick={() => handleFlipCard(idx)}
               style={{perspective: '1000px'}}
-              aria-label={`بطاقة المفاجآت ${idx + 1}`}
-              className={`group relative h-full w-full min-h-0 rounded-2xl focus:outline-none ${
+              aria-label={`بطاقة رقم ${idx + 1}`}
+              className={`group relative h-full w-full min-h-[78px] rounded-2xl focus:outline-none ${
                 canClick ? 'cursor-pointer' : 'cursor-default'
               }`}
             >
@@ -239,32 +272,21 @@ export const MysteryCardsTab: React.FC<MysteryCardsTabProps> = ({
                 }}
                 className="relative h-full w-full"
               >
-                {/* Card Front (Face-Down Mystery Side) */}
+                {/* Card Front (Numbers Only, Face-Down Mystery Side) */}
                 <div
                   style={{backfaceVisibility: 'hidden'}}
-                  className={`absolute inset-0 flex flex-col items-center justify-center gap-1.5 rounded-2xl border p-2.5 shadow-lg transition ${
+                  className={`absolute inset-0 flex items-center justify-center rounded-2xl border p-2 shadow-lg transition ${
                     isLockedToday
                       ? 'border-rose-200/15 bg-black/40 opacity-70'
                       : 'border-rose-300/40 bg-gradient-to-br from-rose-900/75 via-[#2c0918]/80 to-rose-950/85 hover:border-amber-300/60 hover:scale-[1.015] active:scale-[0.98]'
                   } backdrop-blur-sm`}
                 >
                   <div className="pointer-events-none absolute inset-1.5 rounded-xl border border-dashed border-amber-200/25" />
-                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-rose-500/25 border border-rose-300/35 shadow-inner">
-                    {isLockedToday ? (
-                      <Lock className="h-4 w-4 text-rose-200/80" />
-                    ) : (
-                      <Gift className="h-5 w-5 text-amber-200 drop-shadow" />
-                    )}
-                  </div>
-                  <span className="text-xs sm:text-sm font-extrabold text-white drop-shadow">
-                    {flippingSlot === idx
-                      ? 'جاري الكشف...'
-                      : isLockedToday
-                        ? 'مغلقة لليوم'
-                        : `كارت الحظ ${idx + 1}`}
-                  </span>
-                  <span className="text-[10px] font-semibold text-rose-200/85">
-                    {isLockedToday ? 'تُفتح غداً' : 'اضغط لقلب البطاقة'}
+                  <span
+                    dir="ltr"
+                    className="font-mono-num text-3xl sm:text-4xl font-black text-amber-200 drop-shadow-[0_2px_10px_rgba(251,191,36,0.45)]"
+                  >
+                    {idx + 1}
                   </span>
                 </div>
 

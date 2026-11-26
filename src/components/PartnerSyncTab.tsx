@@ -10,6 +10,7 @@ interface PartnerSyncTabProps {
   malePresence: PartnerPresenceData | null;
   femalePresence: PartnerPresenceData | null;
   onSendKissPing: (event: ReactionEvent, note: string) => Promise<void>;
+  onAfterSend?: () => void;
 }
 
 function formatLastSeen(ts?: number): string {
@@ -26,6 +27,7 @@ export const PartnerSyncTab: React.FC<PartnerSyncTabProps> = ({
   malePresence,
   femalePresence,
   onSendKissPing,
+  onAfterSend,
 }) => {
   const [note, setNote] = useState('');
   const [copied, setCopied] = useState(false);
@@ -50,12 +52,14 @@ export const PartnerSyncTab: React.FC<PartnerSyncTabProps> = ({
       {
         id: `kiss_${Date.now()}`,
         type: 'kiss',
+        source: 'ping',
         triggeredBy: role,
         label: text,
         timestamp: Date.now(),
       },
       text
     );
+    onAfterSend?.();
   };
 
   const partnerData = role === 'male' ? femalePresence : malePresence;

@@ -34,7 +34,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
   const handleLogin = async () => {
     if (busy) return;
     if (pin.length < 4) {
-      setError('أدخل رمز الدخول المكون من 4 أرقام (الزوج 0000 • الزوجة 1111).');
+      setError('أدخل رمز الدخول المكون من 4 أرقام على الأقل.');
       return;
     }
     setBusy(true);
@@ -187,9 +187,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
           >
             <Lock className="h-4 w-4" />
             <span>
-              {busy
-                ? 'جاري التحقق والدخول...'
-                : 'دخول (الزوج 0000 • الزوجة 1111)'}
+              {busy ? 'جاري التحقق والدخول...' : 'دخول'}
             </span>
           </button>
         </div>
