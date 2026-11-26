@@ -163,11 +163,11 @@ export const SpinWheelTab: React.FC<SpinWheelTabProps> = ({
   return (
     <div className="flex h-full w-full flex-col items-center justify-between py-2 px-2">
       {/* Header status strip */}
-      <div className="w-full text-center">
+      <div className="w-full text-center drop-shadow-[0_1px_3px_rgba(0,0,0,0.95)]">
         <h2 className="text-base sm:text-lg font-extrabold text-white">
           لعبة رول الحظ
         </h2>
-        <p className="text-[11px] text-rose-200/80">
+        <p className="text-[11px] font-semibold text-rose-100">
           {isAnimating
             ? 'العجلة تدور الآن...'
             : wheelState?.status === 'accepted'

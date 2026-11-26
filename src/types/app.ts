@@ -40,6 +40,8 @@ export interface EncryptedRoomSettings {
   overlayOpacity: number;
   backgroundType: 'default' | 'image' | 'video' | 'gif';
   backgroundSyncedUrl?: string;
+  backgroundScale?: number;
+  backgroundFit?: 'cover' | 'contain';
   wheelSegments: WheelSegment[];
   quizRewards: QuizRewardButton[];
   askedQuestionIds: string[];
@@ -149,6 +151,8 @@ export const DEFAULT_ROOM_SETTINGS: EncryptedRoomSettings = {
   bannerText: 'أنتِ أجمل أقداري... كل لحظة تجمعنا نبض وحياة ❤️💋',
   overlayOpacity: 0.62,
   backgroundType: 'default',
+  backgroundScale: 1,
+  backgroundFit: 'cover',
   wheelSegments: DEFAULT_WHEEL_SEGMENTS,
   quizRewards: DEFAULT_QUIZ_REWARDS,
   askedQuestionIds: [],

@@ -1,6 +1,7 @@
 import React, {useState} from 'react';
 import {
   Download,
+  Eye,
   Image as ImageIcon,
   Lock,
   LogOut,
@@ -9,6 +10,8 @@ import {
   Trash2,
   Upload,
   X,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react';
 import {
   EncryptedRoomSettings,
@@ -17,7 +20,7 @@ import {
   SharedPhotoItem,
   WheelSegment,
 } from '../types/app';
-import {compressImageFile, fileToDataUrl} from '../services/mediaStore';
+import {compressImageFile} from '../services/mediaStore';
 import {usePWAInstall} from '../hooks/usePWAInstall';
 
 type SettingsSection = 'general' | 'background' | 'wheel' | 'quiz' | 'photos';
@@ -32,12 +35,18 @@ interface SettingsModalProps {
   onChangePasscode: (newPin: string, nextSettings: EncryptedRoomSettings) => Promise<void>;
   onUpdateBackground: (
     type: MediaBackgroundConfig['type'],
-    dataUrl: string,
-    isSyncedMedia: boolean
+    file?: File
   ) => Promise<void>;
   onUploadPhoto: (dataUrl: string, caption: string) => Promise<void>;
   onDeletePhoto: (photoId: string) => Promise<void>;
   onSignOut: () => Promise<void>;
+  onPreviewBackgroundControls?: (
+    overrides: {
+      overlayOpacity?: number;
+      backgroundScale?: number;
+      backgroundFit?: 'cover' | 'contain';
+    } | null
+  ) => void;
 }
 
 const WHEEL_COLORS = [
@@ -63,6 +72,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onUploadPhoto,
   onDeletePhoto,
   onSignOut,
+  onPreviewBackgroundControls,
 }) => {
   const [unlocked, setUnlocked] = useState(false);
   const [pinAttempt, setPinAttempt] = useState('');
@@ -73,6 +83,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [newPin, setNewPin] = useState('');
   const [bannerText, setBannerText] = useState(settings.bannerText);
   const [overlayOpacity, setOverlayOpacity] = useState(settings.overlayOpacity);
+  const [backgroundScale, setBackgroundScale] = useState<number>(
+    settings.backgroundScale ?? 1
+  );
+  const [backgroundFit, setBackgroundFit] = useState<'cover' | 'contain'>(
+    settings.backgroundFit ?? 'cover'
+  );
+  const [livePreviewMode, setLivePreviewMode] = useState(false);
   const [allowZoom, setAllowZoom] = useState(settings.allowZoom);
   const [wheelSegments, setWheelSegments] = useState<WheelSegment[]>(settings.wheelSegments);
   const [quizRewards, setQuizRewards] = useState<QuizRewardButton[]>(settings.quizRewards);
@@ -84,11 +101,41 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   if (!isOpen) return null;
 
+  const pushPreview = (
+    nextOpacity: number,
+    nextScale: number,
+    nextFit: 'cover' | 'contain'
+  ) => {
+    onPreviewBackgroundControls?.({
+      overlayOpacity: nextOpacity,
+      backgroundScale: nextScale,
+      backgroundFit: nextFit,
+    });
+  };
+
+  const updateScale = (val: number) => {
+    const clamped = Math.min(3, Math.max(0.4, Number(val.toFixed(2))));
+    setBackgroundScale(clamped);
+    pushPreview(overlayOpacity, clamped, backgroundFit);
+  };
+
+  const updateFit = (fit: 'cover' | 'contain') => {
+    setBackgroundFit(fit);
+    pushPreview(overlayOpacity, backgroundScale, fit);
+  };
+
+  const updateOpacity = (val: number) => {
+    setOverlayOpacity(val);
+    pushPreview(val, backgroundScale, backgroundFit);
+  };
+
   const handleClose = () => {
     setUnlocked(false);
     setPinAttempt('');
     setPinError(null);
     setStatusMsg(null);
+    setLivePreviewMode(false);
+    onPreviewBackgroundControls?.(null);
     onClose();
   };
 
@@ -99,6 +146,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setPinError(null);
       setBannerText(settings.bannerText);
       setOverlayOpacity(settings.overlayOpacity);
+      setBackgroundScale(settings.backgroundScale ?? 1);
+      setBackgroundFit(settings.backgroundFit ?? 'cover');
+      setLivePreviewMode(false);
       setAllowZoom(settings.allowZoom);
       setWheelSegments(settings.wheelSegments);
       setQuizRewards(settings.quizRewards);
@@ -129,6 +179,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         ...settings,
         bannerText: bannerText.trim() || settings.bannerText,
         overlayOpacity,
+        backgroundScale,
+        backgroundFit,
         allowZoom,
         wheelSegments: cleanedWheel.length > 0 ? cleanedWheel : settings.wheelSegments,
         quizRewards: cleanedRewards.length > 0 ? cleanedRewards : settings.quizRewards,
@@ -141,9 +193,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         }
         await onChangePasscode(trimmedPin, nextSettings);
         setNewPin('');
+        onPreviewBackgroundControls?.(null);
         setStatusMsg('تم تحديث الرمز السري وإعادة تشفير الغرفة بالكامل.');
       } else {
         await onSaveSettings(nextSettings);
+        onPreviewBackgroundControls?.(null);
         setStatusMsg('تم حفظ الإعدادات وتشفيرها بنجاح.');
       }
     } catch (err) {
@@ -157,31 +211,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
     setBusy(true);
-    setStatusMsg(null);
+    setStatusMsg('جاري رفع الخلفية وتشفيرها ومزامنتها مع الشريك...');
     try {
       const isVideo = file.type.startsWith('video/');
       const isGif = file.type === 'image/gif';
+      const mediaType: MediaBackgroundConfig['type'] = isVideo
+        ? 'video'
+        : isGif
+          ? 'gif'
+          : 'image';
 
-      if (isVideo) {
-        const dataUrl = await fileToDataUrl(file);
-        await onUpdateBackground('video', dataUrl, false);
-        setStatusMsg('تم تعيين الفيديو كخلفية متحركة بنجاح.');
-      } else if (isGif) {
-        const dataUrl = await fileToDataUrl(file);
-        const canSync = dataUrl.length < 600000;
-        await onUpdateBackground('gif', dataUrl, canSync);
-        setStatusMsg(
-          canSync
-            ? 'تم تعيين ومزامنة خلفية GIF بنجاح.'
-            : 'تم حفظ خلفية GIF محلياً بجودة كاملة.'
-        );
-      } else {
-        const compressed = await compressImageFile(file, 1280, 420000);
-        await onUpdateBackground('image', compressed, true);
-        setStatusMsg('تم تحديث ومزامنة صورة الخلفية بنجاح.');
-      }
-    } catch {
-      setStatusMsg('تعذر تحميل ملف الخلفية.');
+      await onUpdateBackground(mediaType, file);
+      setStatusMsg('تم رفع ومزامنة الخلفية على شاشة الشريك بنجاح.');
+    } catch (err) {
+      setStatusMsg(
+        err instanceof Error ? err.message : 'تعذر تحميل أو مزامنة ملف الخلفية.'
+      );
     } finally {
       setBusy(false);
       e.target.value = '';
@@ -208,8 +253,96 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   };
 
+  if (unlocked && livePreviewMode) {
+    return (
+      <div className="pointer-events-none fixed inset-0 z-50 flex flex-col justify-end p-3">
+        <div className="pointer-events-auto mx-auto w-full max-w-md rounded-3xl border border-rose-300/35 bg-[#1a050e]/90 p-3.5 text-rose-50 shadow-2xl backdrop-blur-xl space-y-2.5">
+          <div className="flex items-center justify-between text-xs font-extrabold">
+            <span>ضبط تقريب وإبعاد الخلفية</span>
+            <span className="font-mono-num rounded-lg bg-rose-500/25 px-2 py-0.5 text-amber-200">
+              {Math.round(backgroundScale * 100)}%
+            </span>
+          </div>
+
+          <input
+            type="range"
+            min="0.4"
+            max="3"
+            step="0.05"
+            value={backgroundScale}
+            onChange={(e) => updateScale(Number(e.target.value))}
+            aria-label="نسبة تقريب أو إبعاد الخلفية"
+            className="w-full accent-rose-500"
+          />
+
+          <div className="grid grid-cols-4 gap-1.5">
+            <button
+              type="button"
+              onClick={() => updateScale(backgroundScale - 0.1)}
+              className="flex min-h-[40px] items-center justify-center gap-1 rounded-xl bg-white/10 px-1 text-[11px] font-bold text-white hover:bg-white/20"
+            >
+              <ZoomOut className="h-3.5 w-3.5" />
+              <span>إبعاد</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => updateScale(1)}
+              className="flex min-h-[40px] items-center justify-center rounded-xl bg-white/10 px-1 text-[11px] font-bold text-amber-200 hover:bg-white/20"
+            >
+              100%
+            </button>
+            <button
+              type="button"
+              onClick={() => updateScale(backgroundScale + 0.1)}
+              className="flex min-h-[40px] items-center justify-center gap-1 rounded-xl bg-white/10 px-1 text-[11px] font-bold text-white hover:bg-white/20"
+            >
+              <ZoomIn className="h-3.5 w-3.5" />
+              <span>تقريب</span>
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                updateFit(backgroundFit === 'cover' ? 'contain' : 'cover')
+              }
+              className="flex min-h-[40px] items-center justify-center rounded-xl bg-rose-500/25 px-1 text-[10px] font-bold text-rose-100 hover:bg-rose-500/40"
+            >
+              {backgroundFit === 'cover' ? 'صورة كاملة' : 'ملء الشاشة'}
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => setLivePreviewMode(false)}
+              className="min-h-[40px] rounded-xl bg-white/15 text-xs font-bold text-white hover:bg-white/25"
+            >
+              رجوع للإعدادات
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={async () => {
+                await handleSaveGeneralAndLists();
+                setLivePreviewMode(false);
+              }}
+              className="min-h-[40px] rounded-xl bg-gradient-to-r from-rose-600 to-rose-500 text-xs font-extrabold text-white shadow disabled:opacity-60"
+            >
+              {busy ? 'جاري الحفظ...' : 'حفظ الحجم'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-3 backdrop-blur-md">
+    <div
+      className={`fixed inset-0 z-50 flex items-center justify-center p-3 transition ${
+        unlocked && section === 'background'
+          ? 'bg-black/45 backdrop-blur-none'
+          : 'bg-black/75 backdrop-blur-md'
+      }`}
+    >
       <div className="relative flex max-h-[90dvh] w-full max-w-md flex-col overflow-hidden rounded-3xl border border-rose-300/30 bg-[#1a050e]/95 text-rose-50 shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-rose-300/15 px-4 py-3">
@@ -350,13 +483,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
               {section === 'background' && (
                 <div className="space-y-3.5">
-                  <label className="flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-rose-300/35 bg-black/35 p-5 text-center cursor-pointer hover:border-rose-400 transition">
-                    <Upload className="h-7 w-7 text-rose-400" />
+                  <label className="flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-rose-300/35 bg-black/35 p-4 text-center cursor-pointer hover:border-rose-400 transition">
+                    <Upload className="h-6 w-6 text-rose-400" />
                     <span className="text-xs font-extrabold text-white">
                       اختر صورة، فيديو (MP4/WebM)، أو GIF للخلفية
                     </span>
                     <span className="text-[11px] text-rose-200/70">
-                      تظهر الخلفية بوضوح خلف الواجهة مع تعتيم قابل للتعديل
+                      تظهر الخلفية بوضوح خلف الواجهة مع تحكم كامل بالتقريب والإبعاد
                     </span>
                     <input
                       type="file"
@@ -365,6 +498,86 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       className="hidden"
                     />
                   </label>
+
+                  {/* Background Zoom In / Zoom Out Controls */}
+                  <div className="rounded-2xl border border-rose-300/20 bg-black/35 p-3 space-y-2.5">
+                    <div className="flex items-center justify-between text-xs font-bold text-rose-200">
+                      <span>حجم الخلفية (تقريب / إبعاد)</span>
+                      <span className="font-mono-num rounded-md bg-rose-500/20 px-2 py-0.5 text-amber-200">
+                        {Math.round(backgroundScale * 100)}%
+                      </span>
+                    </div>
+
+                    <input
+                      type="range"
+                      min="0.4"
+                      max="3"
+                      step="0.05"
+                      value={backgroundScale}
+                      onChange={(e) => updateScale(Number(e.target.value))}
+                      aria-label="تقريب أو إبعاد صورة الخلفية"
+                      className="w-full accent-rose-500"
+                    />
+
+                    <div className="grid grid-cols-4 gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => updateScale(backgroundScale - 0.1)}
+                        className="flex min-h-[38px] items-center justify-center gap-1 rounded-xl bg-white/10 px-1 text-[11px] font-bold text-white hover:bg-white/20"
+                      >
+                        <ZoomOut className="h-3.5 w-3.5" />
+                        <span>إبعاد</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => updateScale(1)}
+                        className="flex min-h-[38px] items-center justify-center rounded-xl bg-white/10 px-1 text-[11px] font-bold text-amber-200 hover:bg-white/20"
+                      >
+                        100%
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => updateScale(backgroundScale + 0.1)}
+                        className="flex min-h-[38px] items-center justify-center gap-1 rounded-xl bg-white/10 px-1 text-[11px] font-bold text-white hover:bg-white/20"
+                      >
+                        <ZoomIn className="h-3.5 w-3.5" />
+                        <span>تقريب</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setLivePreviewMode(true)}
+                        className="flex min-h-[38px] items-center justify-center gap-1 rounded-xl bg-rose-600/80 px-1 text-[11px] font-bold text-white hover:bg-rose-500"
+                      >
+                        <Eye className="h-3.5 w-3.5" />
+                        <span>معاينة</span>
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 pt-0.5">
+                      <button
+                        type="button"
+                        onClick={() => updateFit('cover')}
+                        className={`min-h-[36px] rounded-xl text-[11px] font-bold transition ${
+                          backgroundFit === 'cover'
+                            ? 'bg-rose-600 text-white shadow'
+                            : 'bg-white/10 text-rose-200 hover:bg-white/15'
+                        }`}
+                      >
+                        ملء الشاشة
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => updateFit('contain')}
+                        className={`min-h-[36px] rounded-xl text-[11px] font-bold transition ${
+                          backgroundFit === 'contain'
+                            ? 'bg-rose-600 text-white shadow'
+                            : 'bg-white/10 text-rose-200 hover:bg-white/15'
+                        }`}
+                      >
+                        إظهار الصورة كاملة
+                      </button>
+                    </div>
+                  </div>
 
                   <div>
                     <div className="flex items-center justify-between text-xs font-bold text-rose-200 mb-1">
@@ -379,15 +592,27 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       max="0.9"
                       step="0.05"
                       value={overlayOpacity}
-                      onChange={(e) => setOverlayOpacity(Number(e.target.value))}
+                      onChange={(e) => updateOpacity(Number(e.target.value))}
                       className="w-full accent-rose-500"
                     />
                   </div>
 
                   <button
                     type="button"
-                    onClick={() => onUpdateBackground('default', '', true)}
-                    className="flex w-full min-h-[40px] items-center justify-center gap-1.5 rounded-xl bg-white/10 text-xs font-bold text-rose-100 hover:bg-white/20"
+                    disabled={busy}
+                    onClick={async () => {
+                      setBusy(true);
+                      try {
+                        setBackgroundScale(1);
+                        setBackgroundFit('cover');
+                        onPreviewBackgroundControls?.(null);
+                        await onUpdateBackground('default');
+                        setStatusMsg('تمت استعادة الخلفية الافتراضية ومزامنتها.');
+                      } finally {
+                        setBusy(false);
+                      }
+                    }}
+                    className="flex w-full min-h-[40px] items-center justify-center gap-1.5 rounded-xl bg-white/10 text-xs font-bold text-rose-100 hover:bg-white/20 disabled:opacity-60"
                   >
                     <RotateCcw className="h-3.5 w-3.5" />
                     <span>استعادة الخلفية الرومانسية الافتراضية</span>

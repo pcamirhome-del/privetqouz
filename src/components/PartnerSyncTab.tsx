@@ -67,22 +67,22 @@ export const PartnerSyncTab: React.FC<PartnerSyncTabProps> = ({
   return (
     <div className="flex h-full w-full flex-col justify-between gap-2.5 py-1 inner-scroll">
       {/* Live Presence Cards */}
-      <div className="grid grid-cols-2 gap-2.5">
-        <div className="rounded-2xl border border-sky-400/25 bg-sky-950/35 p-3 text-center">
+      <div className="grid grid-cols-2 gap-2.5 [text-shadow:0_1px_2px_rgba(0,0,0,0.95)]">
+        <div className="rounded-2xl border border-sky-300/30 bg-sky-950/20 p-3 text-center backdrop-blur-[2px]">
           <div className="text-2xl mb-1">👨🏻</div>
           <p className="text-xs font-extrabold text-white">الذكر (الحبيب)</p>
           <p
             className={`mt-1 text-[11px] font-bold ${
               malePresence?.online && Date.now() - (malePresence.lastSeen || 0) < 90000
                 ? 'text-emerald-300'
-                : 'text-sky-200/70'
+                : 'text-sky-100'
             }`}
           >
             {formatLastSeen(malePresence?.lastSeen)}
           </p>
         </div>
 
-        <div className="rounded-2xl border border-rose-400/25 bg-rose-950/35 p-3 text-center">
+        <div className="rounded-2xl border border-rose-300/30 bg-rose-950/20 p-3 text-center backdrop-blur-[2px]">
           <div className="text-2xl mb-1">👩🏻</div>
           <p className="text-xs font-extrabold text-white">الأنثى (الحبيبة)</p>
           <p
@@ -90,7 +90,7 @@ export const PartnerSyncTab: React.FC<PartnerSyncTabProps> = ({
               femalePresence?.online &&
               Date.now() - (femalePresence.lastSeen || 0) < 90000
                 ? 'text-emerald-300'
-                : 'text-rose-200/70'
+                : 'text-rose-100'
             }`}
           >
             {formatLastSeen(femalePresence?.lastSeen)}
@@ -99,7 +99,7 @@ export const PartnerSyncTab: React.FC<PartnerSyncTabProps> = ({
       </div>
 
       {/* Send Instant Kiss & Romantic Ping */}
-      <div className="rounded-2xl border border-rose-300/25 bg-black/35 p-3 space-y-2.5">
+      <div className="rounded-2xl border border-rose-200/25 bg-black/20 p-3 space-y-2.5 backdrop-blur-[2px] [text-shadow:0_1px_2px_rgba(0,0,0,0.95)]">
         <div className="flex items-center justify-between">
           <span className="flex items-center gap-1.5 text-xs font-extrabold text-rose-100">
             <HeartHandshake className="h-4 w-4 text-rose-400" />
@@ -137,7 +137,7 @@ export const PartnerSyncTab: React.FC<PartnerSyncTabProps> = ({
       </div>
 
       {/* Room Encryption & PWA Install */}
-      <div className="rounded-2xl border border-rose-300/20 bg-black/30 p-3 space-y-2 mt-auto">
+      <div className="rounded-2xl border border-rose-200/25 bg-black/20 p-3 space-y-2 mt-auto backdrop-blur-[2px] [text-shadow:0_1px_2px_rgba(0,0,0,0.95)]">
         <div className="flex items-center justify-between gap-2 text-xs">
           <span className="flex items-center gap-1.5 text-emerald-300 font-bold">
             <ShieldCheck className="h-4 w-4 shrink-0" />

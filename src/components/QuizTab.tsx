@@ -297,14 +297,14 @@ export const QuizTab: React.FC<QuizTabProps> = ({
     return (
       <div className="flex h-full w-full flex-col justify-between gap-2 py-1">
         {/* Top Scoreboard & Timer */}
-        <div className="flex items-center justify-between gap-2 rounded-2xl border border-rose-300/20 bg-black/35 px-3 py-2">
+        <div className="flex items-center justify-between gap-2 rounded-2xl border border-rose-200/25 bg-black/20 px-3 py-2 backdrop-blur-[2px] [text-shadow:0_1px_2px_rgba(0,0,0,0.95)]">
           <div className="flex items-center gap-2 text-xs font-bold">
             <span className="text-sky-300">👨🏻 {quizState.maleScore}</span>
-            <span className="text-rose-200/50">·</span>
-            <span className="text-rose-300">👩🏻 {quizState.femaleScore}</span>
+            <span className="text-rose-200/70">·</span>
+            <span className="text-rose-200">👩🏻 {quizState.femaleScore}</span>
           </div>
 
-          <span className="font-mono-num text-xs font-bold text-rose-100">
+          <span className="font-mono-num text-xs font-bold text-white">
             سؤال {quizState.currentIndex + 1} / {quizState.questions.length}
           </span>
 
@@ -312,7 +312,7 @@ export const QuizTab: React.FC<QuizTabProps> = ({
             className={`font-mono-num flex items-center gap-1 rounded-xl px-2.5 py-1 text-xs font-extrabold ${
               secondsLeft <= 7
                 ? 'bg-rose-600 text-white animate-pulse'
-                : 'bg-white/10 text-amber-200'
+                : 'bg-black/30 text-amber-200'
             }`}
           >
             <Clock className="h-3.5 w-3.5" />
@@ -321,7 +321,7 @@ export const QuizTab: React.FC<QuizTabProps> = ({
         </div>
 
         {/* Question Card */}
-        <div className="flex-1 flex flex-col justify-center rounded-2xl border border-rose-300/20 bg-black/30 p-3.5">
+        <div className="flex-1 flex flex-col justify-center rounded-2xl border border-rose-200/25 bg-black/20 p-3.5 backdrop-blur-[2px] [text-shadow:0_1px_2px_rgba(0,0,0,0.95)]">
           <div className="flex items-center justify-between text-[11px] text-rose-200/75 mb-2">
             <span>
               {currentQuestion.category === 'arts'
@@ -349,17 +349,17 @@ export const QuizTab: React.FC<QuizTabProps> = ({
               const reveal = Boolean(myAnswer) || secondsLeft <= 0;
 
               let btnClass =
-                'border-rose-200/20 bg-white/10 text-white hover:bg-rose-500/25';
+                'border-rose-200/25 bg-black/25 text-white hover:bg-rose-500/35 [text-shadow:0_1px_2px_rgba(0,0,0,0.95)]';
               if (reveal) {
                 if (isCorrectOpt) {
                   btnClass =
-                    'border-emerald-400 bg-emerald-600/80 text-white';
+                    'border-emerald-400 bg-emerald-600/85 text-white';
                 } else if (isMine && !isCorrectOpt) {
                   btnClass =
                     'border-rose-400 bg-rose-700/85 text-white';
                 } else {
                   btnClass =
-                    'border-white/10 bg-black/25 text-rose-100/60';
+                    'border-white/15 bg-black/20 text-rose-100/80';
                 }
               }
 
@@ -415,7 +415,7 @@ export const QuizTab: React.FC<QuizTabProps> = ({
 
     return (
       <div className="flex h-full w-full flex-col justify-between gap-2 py-1 inner-scroll">
-        <div className="rounded-2xl border border-amber-300/30 bg-black/35 p-3.5 text-center">
+        <div className="rounded-2xl border border-amber-300/30 bg-black/20 p-3.5 text-center backdrop-blur-[2px] [text-shadow:0_1px_2px_rgba(0,0,0,0.95)]">
           <Trophy className="mx-auto h-7 w-7 text-amber-300 mb-1" />
           <h3 className="text-base font-extrabold text-white">{winnerLabel}</h3>
           <div className="mt-2 flex items-center justify-center gap-6 text-sm font-bold">
@@ -428,7 +428,7 @@ export const QuizTab: React.FC<QuizTabProps> = ({
           </div>
         </div>
 
-        <div className="flex-1 rounded-2xl border border-rose-300/20 bg-black/30 p-3 flex flex-col justify-between">
+        <div className="flex-1 rounded-2xl border border-rose-200/25 bg-black/20 p-3 flex flex-col justify-between backdrop-blur-[2px] [text-shadow:0_1px_2px_rgba(0,0,0,0.95)]">
           <div>
             <p className="text-xs font-extrabold text-rose-200 text-center mb-2">
               {quizState.loserSelectedRewardLabel
@@ -476,12 +476,12 @@ export const QuizTab: React.FC<QuizTabProps> = ({
   return (
     <div className="flex h-full w-full flex-col justify-between gap-2.5 py-1 inner-scroll">
       {/* Rules Box */}
-      <div className="rounded-2xl border border-rose-300/25 bg-black/35 p-3">
+      <div className="rounded-2xl border border-rose-200/25 bg-black/20 p-3 backdrop-blur-[2px] [text-shadow:0_1px_2px_rgba(0,0,0,0.95)]">
         <div className="flex items-center gap-1.5 text-amber-200 mb-1.5">
           <Award className="h-4 w-4 shrink-0" />
           <h2 className="text-sm font-extrabold">قوانين مسابقة التحدي</h2>
         </div>
-        <ul className="space-y-1 text-[11px] sm:text-xs text-rose-100/90 leading-relaxed">
+        <ul className="space-y-1 text-[11px] sm:text-xs text-white leading-relaxed">
           <li>• 10 أسئلة عشوائية متجددة في كل جولة (30 ثانية لكل سؤال).</li>
           <li>• الشريك صاحب الإجابات الصحيحة الأكثر يفوز بالجولة.</li>
           <li>• تحدٍ إلزامي: يختار الخاسر وينفذ أحد خيارات الفائز فوراً.</li>
@@ -489,8 +489,8 @@ export const QuizTab: React.FC<QuizTabProps> = ({
       </div>
 
       {/* Category 4-Button Grid */}
-      <div>
-        <div className="flex items-center justify-between text-[11px] text-rose-200/80 mb-1.5">
+      <div className="[text-shadow:0_1px_2px_rgba(0,0,0,0.95)]">
+        <div className="flex items-center justify-between text-[11px] font-semibold text-rose-100 mb-1.5">
           <span>اختر تصنيف الأسئلة:</span>
           <span className="font-mono-num">المتاح بدون تكرار: {unseenCount}</span>
         </div>
@@ -503,7 +503,7 @@ export const QuizTab: React.FC<QuizTabProps> = ({
               className={`min-h-[44px] rounded-xl border px-1 py-2 text-[11px] sm:text-xs font-bold leading-tight break-words transition ${
                 selectedCategory === cat.id
                   ? 'border-rose-300 bg-rose-600 text-white shadow'
-                  : 'border-rose-200/20 bg-white/10 text-rose-100 hover:bg-white/15'
+                  : 'border-rose-200/25 bg-black/20 text-white backdrop-blur-[2px] hover:bg-black/35'
               }`}
             >
               {cat.label}

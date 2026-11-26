@@ -227,14 +227,14 @@ export const PhotosTab: React.FC<PhotosTabProps> = ({
       </AnimatePresence>
 
       {/* Persistent Gallery Grid (No delete controls in main view) */}
-      <div className="flex-1 inner-scroll rounded-2xl border border-rose-300/15 bg-black/25 p-2">
+      <div className="flex-1 inner-scroll rounded-2xl border border-rose-200/20 bg-black/15 p-2 backdrop-blur-[2px]">
         {photos.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center text-center p-4 text-rose-200/75">
-            <ImageIcon className="h-10 w-10 mb-2 opacity-60" />
-            <p className="text-sm font-bold text-rose-100">
+          <div className="flex h-full flex-col items-center justify-center text-center p-4 text-rose-100 [text-shadow:0_1px_3px_rgba(0,0,0,0.95)]">
+            <ImageIcon className="h-10 w-10 mb-2 opacity-80" />
+            <p className="text-sm font-bold text-white">
               المعرض فارغ حالياً
             </p>
-            <p className="mt-1 text-xs">
+            <p className="mt-1 text-xs font-medium">
               أضف صوراً دائمة ومشفرة من زر الإعدادات بالأعلى لمشاركتها والسحب العشوائي.
             </p>
           </div>

@@ -1,5 +1,12 @@
 import {initializeApp} from 'firebase/app';
 import {
+  type Database,
+  getDatabase,
+  onValue,
+  ref as dbRef,
+  set as dbSet,
+} from 'firebase/database';
+import {
   arrayUnion,
   deleteDoc,
   doc,
@@ -11,10 +18,17 @@ import {
   setDoc,
   updateDoc,
 } from 'firebase/firestore';
+import {
+  getDownloadURL,
+  getStorage,
+  ref as storageRef,
+  uploadBytes,
+} from 'firebase/storage';
 import firebaseConfig from '../../firebase-applet-config.json';
 import {
   DEFAULT_ROOM_SETTINGS,
   EncryptedRoomSettings,
+  MediaBackgroundConfig,
   PartnerPresenceData,
   PartnerRole,
   PhotosLiveState,
@@ -24,9 +38,17 @@ import {
   WheelLiveState,
 } from '../types/app';
 import {computeJoinCodeHash, decryptPayload, encryptPayload} from './crypto';
+import {compressImageFile, fileToDataUrl} from './mediaStore';
 
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+export const storage = getStorage(app);
+
+const rtdbUrl =
+  (firebaseConfig as {databaseURL?: string}).databaseURL ||
+  import.meta.env.VITE_FIREBASE_DATABASE_URL ||
+  '';
+export const rtdb: Database | null = rtdbUrl ? getDatabase(app, rtdbUrl) : null;
 
 const DEVICE_UID_KEY = 'nabd_device_uid';
 
@@ -321,6 +343,128 @@ export function subscribeLiveState<T>(
       handleFirestoreError(error, OperationType.GET, path);
     }
   );
+}
+
+export interface SyncedBackgroundPayload {
+  type: MediaBackgroundConfig['type'];
+  url: string;
+  updatedAt: number;
+}
+
+export async function uploadSharedBackground(
+  roomId: string,
+  passcode: string,
+  mediaType: MediaBackgroundConfig['type'],
+  file?: File
+): Promise<SyncedBackgroundPayload> {
+  if (mediaType === 'default' || !file) {
+    const resetPayload: SyncedBackgroundPayload = {
+      type: 'default',
+      url: '',
+      updatedAt: Date.now(),
+    };
+    const encryptedData = encryptPayload(resetPayload, roomId, passcode);
+    if (rtdb) {
+      await dbSet(dbRef(rtdb, `shared/${roomId}/background`), {
+        encryptedData,
+        updatedAt: resetPayload.updatedAt,
+      }).catch(() => {});
+    }
+    await writeLiveState(roomId, passcode, 'background', resetPayload);
+    return resetPayload;
+  }
+
+  let finalUrl = '';
+  try {
+    const ext = file.name.split('.').pop()?.replace(/[^a-zA-Z0-9]/g, '') || '';
+    const storagePath = `shared/${roomId}/background${ext ? `.${ext}` : ''}`;
+    const fileRef = storageRef(storage, storagePath);
+    await uploadBytes(fileRef, file, {
+      contentType: file.type || (mediaType === 'video' ? 'video/mp4' : 'image/jpeg'),
+      cacheControl: 'public, max-age=3600',
+    });
+    finalUrl = await getDownloadURL(fileRef);
+  } catch (storageErr) {
+    // Fallback to encrypted inline payload via Firestore when Firebase Storage rules/bucket block uploads
+    if (mediaType === 'image') {
+      finalUrl = await compressImageFile(file, 1280, 420000);
+    } else if (file.size <= 500000) {
+      finalUrl = await fileToDataUrl(file);
+    } else {
+      throw storageErr instanceof Error
+        ? new Error(
+            'تعذر رفع الملف الكبير إلى Firebase Storage. تأكد من تفعيل قواعد Firebase Storage أو اختر ملفاً أصغر من 500 كيلوبايت.'
+          )
+        : new Error('تعذر رفع ملف الخلفية إلى السحابة.');
+    }
+  }
+
+  const payload: SyncedBackgroundPayload = {
+    type: mediaType,
+    url: finalUrl,
+    updatedAt: Date.now(),
+  };
+
+  // Encrypt URL and mediaType with VITE_ENCRYPTION_PEPPER + room key before storing in RTDB & Firestore
+  const encryptedData = encryptPayload(payload, roomId, passcode);
+  if (rtdb) {
+    await dbSet(dbRef(rtdb, `shared/${roomId}/background`), {
+      encryptedData,
+      updatedAt: payload.updatedAt,
+    }).catch(() => {});
+  }
+  await writeLiveState(roomId, passcode, 'background', payload);
+  return payload;
+}
+
+export function subscribeSharedBackground(
+  roomId: string,
+  passcode: string,
+  onData: (data: SyncedBackgroundPayload | null) => void
+) {
+  let latestTimestamp = 0;
+
+  const emitIfNewer = (decoded: SyncedBackgroundPayload | null) => {
+    if (!decoded) return;
+    const ts = decoded.updatedAt || 0;
+    if (ts >= latestTimestamp) {
+      latestTimestamp = ts;
+      onData(decoded);
+    }
+  };
+
+  const unsubFirestore = subscribeLiveState<SyncedBackgroundPayload>(
+    roomId,
+    passcode,
+    'background',
+    emitIfNewer
+  );
+
+  let unsubRtdb: (() => void) | null = null;
+  if (rtdb) {
+    const bgRef = dbRef(rtdb, `shared/${roomId}/background`);
+    unsubRtdb = onValue(
+      bgRef,
+      (snapshot) => {
+        const val = snapshot.val() as {encryptedData?: string} | null;
+        if (!val?.encryptedData) return;
+        const decoded = decryptPayload<SyncedBackgroundPayload>(
+          val.encryptedData,
+          roomId,
+          passcode
+        );
+        emitIfNewer(decoded);
+      },
+      () => {
+        // Firestore listener remains active as fallback
+      }
+    );
+  }
+
+  return () => {
+    unsubFirestore();
+    if (unsubRtdb) unsubRtdb();
+  };
 }
 
 export async function uploadEncryptedPhoto(

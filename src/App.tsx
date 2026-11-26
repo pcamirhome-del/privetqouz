@@ -31,12 +31,16 @@ import {
   subscribeLiveState,
   subscribePartnerPresence,
   subscribeRoomSettings,
+  subscribeSharedBackground,
+  type SyncedBackgroundPayload,
   testConnection,
   updatePartnerPresence,
   uploadEncryptedPhoto,
+  uploadSharedBackground,
   writeLiveState,
 } from './services/firebase';
 import {
+  deleteEncryptedLocalMedia,
   loadEncryptedLocalMedia,
   saveEncryptedLocalMedia,
 } from './services/mediaStore';
@@ -83,9 +87,12 @@ function MainAppContent() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [muted, setMuted] = useState(false);
   const [localBgUrl, setLocalBgUrl] = useState<string>('');
-  const [syncedBgPayload, setSyncedBgPayload] = useState<{
-    type: MediaBackgroundConfig['type'];
-    url: string;
+  const [syncedBgPayload, setSyncedBgPayload] =
+    useState<SyncedBackgroundPayload | null>(null);
+  const [bgPreviewOverrides, setBgPreviewOverrides] = useState<{
+    overlayOpacity?: number;
+    backgroundScale?: number;
+    backgroundFit?: 'cover' | 'contain';
   } | null>(null);
 
   const lastReactionIdRef = useRef<string | null>(null);
@@ -170,11 +177,16 @@ function MainAppContent() {
       'photos',
       setPhotosState
     );
-    const unsubBackground = subscribeLiveState<{
-      type: MediaBackgroundConfig['type'];
-      url: string;
-    }>(roomId, pin, 'background', (bg) => {
-      if (bg) setSyncedBgPayload(bg);
+    const unsubBackground = subscribeSharedBackground(roomId, pin, (bg) => {
+      if (!bg) return;
+      setSyncedBgPayload(bg);
+      if (bg.type === 'default') {
+        setLocalBgUrl('');
+        deleteEncryptedLocalMedia(`bg_${roomId}`).catch(() => {});
+      } else if (bg.url) {
+        setLocalBgUrl(bg.url);
+        saveEncryptedLocalMedia(`bg_${roomId}`, bg.url, roomId, pin).catch(() => {});
+      }
     });
     const unsubReaction = subscribeLiveState<ReactionEvent>(
       roomId,
@@ -303,43 +315,44 @@ function MainAppContent() {
 
   const handleUpdateBackground = async (
     type: MediaBackgroundConfig['type'],
-    dataUrl: string,
-    isSyncedMedia: boolean
+    file?: File
   ) => {
     if (!session) return;
-    if (type === 'default') {
+    const result = await uploadSharedBackground(
+      session.roomId,
+      session.pin,
+      type,
+      file
+    );
+    setSyncedBgPayload(result);
+
+    if (result.type === 'default') {
       setLocalBgUrl('');
-      setSyncedBgPayload({type: 'default', url: ''});
-      await saveRoomSettings(session.roomId, session.pin, {
+      await deleteEncryptedLocalMedia(`bg_${session.roomId}`);
+      const next: EncryptedRoomSettings = {
         ...settings,
         backgroundType: 'default',
-      });
-      await writeLiveState(session.roomId, session.pin, 'background', {
-        type: 'default',
-        url: '',
-      });
+        backgroundScale: 1,
+        backgroundFit: 'cover',
+      };
+      setSettings(next);
+      await saveRoomSettings(session.roomId, session.pin, next);
       return;
     }
 
+    setLocalBgUrl(result.url);
     await saveEncryptedLocalMedia(
       `bg_${session.roomId}`,
-      dataUrl,
+      result.url,
       session.roomId,
       session.pin
-    );
-    setLocalBgUrl(dataUrl);
-    await saveRoomSettings(session.roomId, session.pin, {
+    ).catch(() => {});
+    const next: EncryptedRoomSettings = {
       ...settings,
-      backgroundType: type,
-    });
-
-    if (isSyncedMedia && dataUrl.length < 620000) {
-      setSyncedBgPayload({type, url: dataUrl});
-      await writeLiveState(session.roomId, session.pin, 'background', {
-        type,
-        url: dataUrl,
-      });
-    }
+      backgroundType: result.type,
+    };
+    setSettings(next);
+    await saveRoomSettings(session.roomId, session.pin, next);
   };
 
   const handleUploadPhoto = async (dataUrl: string, caption: string) => {
@@ -384,42 +397,61 @@ function MainAppContent() {
     );
   }
 
-  const effectiveBgType =
-    localBgUrl && settings.backgroundType !== 'default'
+  const effectiveBgType = syncedBgPayload
+    ? syncedBgPayload.type
+    : localBgUrl && settings.backgroundType !== 'default'
       ? settings.backgroundType
-      : syncedBgPayload?.type && syncedBgPayload.type !== 'default'
-        ? syncedBgPayload.type
-        : 'default';
+      : 'default';
 
-  const effectiveBgUrl =
-    localBgUrl && settings.backgroundType !== 'default'
+  const effectiveBgUrl = syncedBgPayload
+    ? syncedBgPayload.type === 'default'
+      ? DEFAULT_BG_IMAGE
+      : syncedBgPayload.url || DEFAULT_BG_IMAGE
+    : localBgUrl && settings.backgroundType !== 'default'
       ? localBgUrl
-      : syncedBgPayload?.url || DEFAULT_BG_IMAGE;
+      : DEFAULT_BG_IMAGE;
+
+  const effectiveOverlayOpacity =
+    bgPreviewOverrides?.overlayOpacity ?? settings.overlayOpacity ?? 0.62;
+  const effectiveBgScale =
+    bgPreviewOverrides?.backgroundScale ?? settings.backgroundScale ?? 1;
+  const effectiveBgFit =
+    bgPreviewOverrides?.backgroundFit ?? settings.backgroundFit ?? 'cover';
 
   return (
     <div className="relative flex h-[100dvh] w-screen flex-col overflow-hidden bg-[#140309] text-rose-50">
       {/* Dynamic Custom Background (Static Image, Looping Video, or GIF) */}
-      {effectiveBgType === 'video' && effectiveBgUrl ? (
-        <video
-          src={effectiveBgUrl}
-          autoPlay
-          loop
-          muted
-          playsInline
-          className="pointer-events-none fixed inset-0 h-full w-full object-cover"
-        />
-      ) : (
-        <img
-          src={effectiveBgUrl || DEFAULT_BG_IMAGE}
-          alt="خلفية التطبيق"
-          className="pointer-events-none fixed inset-0 h-full w-full object-cover"
-        />
-      )}
+      <div className="pointer-events-none fixed inset-0 flex items-center justify-center overflow-hidden">
+        {effectiveBgType === 'video' && effectiveBgUrl ? (
+          <video
+            key={effectiveBgUrl}
+            src={effectiveBgUrl}
+            autoPlay
+            loop
+            muted
+            playsInline
+            className={`h-full w-full origin-center transition-transform duration-150 ${
+              effectiveBgFit === 'contain' ? 'object-contain' : 'object-cover'
+            }`}
+            style={{transform: `scale(${effectiveBgScale})`}}
+          />
+        ) : (
+          <img
+            key={effectiveBgUrl || DEFAULT_BG_IMAGE}
+            src={effectiveBgUrl || DEFAULT_BG_IMAGE}
+            alt="خلفية التطبيق"
+            className={`h-full w-full origin-center transition-transform duration-150 ${
+              effectiveBgFit === 'contain' ? 'object-contain' : 'object-cover'
+            }`}
+            style={{transform: `scale(${effectiveBgScale})`}}
+          />
+        )}
+      </div>
 
       {/* Adjustable Overlay Opacity */}
       <div
         className="pointer-events-none fixed inset-0 bg-[#120208]"
-        style={{opacity: settings.overlayOpacity ?? 0.62}}
+        style={{opacity: effectiveOverlayOpacity}}
       />
 
       {/* Romantic Floating Hearts & Expressive Lips */}
@@ -491,8 +523,8 @@ function MainAppContent() {
                 onClick={() => setActiveTab(id)}
                 className={`flex min-h-[44px] flex-col items-center justify-center gap-0.5 rounded-2xl border px-1 py-1 text-[10px] sm:text-xs font-extrabold leading-tight break-words transition ${
                   active
-                    ? 'border-rose-300/60 bg-gradient-to-b from-rose-600 to-rose-700 text-white shadow-lg'
-                    : 'border-rose-200/15 bg-black/45 text-rose-100/85 backdrop-blur-md hover:bg-white/10'
+                    ? 'border-rose-300/60 bg-gradient-to-b from-rose-600 to-rose-700 text-white shadow-lg backdrop-blur-xl'
+                    : 'border-rose-200/20 bg-black/55 text-rose-100/90 backdrop-blur-xl hover:bg-black/65'
                 }`}
               >
                 <Icon className="h-4 w-4 shrink-0" />
@@ -503,7 +535,7 @@ function MainAppContent() {
         </nav>
 
         {/* Active Tab Viewport Container */}
-        <main className="mt-2 flex-1 min-h-0 overflow-hidden rounded-3xl border border-rose-300/20 bg-black/45 p-2.5 sm:p-3.5 backdrop-blur-xl shadow-2xl">
+        <main className="mt-2 flex-1 min-h-0 overflow-hidden rounded-3xl border border-rose-200/20 bg-black/15 p-2.5 sm:p-3.5 backdrop-blur-[2px] shadow-xl">
           {activeTab === 'wheel' && (
             <SpinWheelTab
               role={session.role}
@@ -581,7 +613,10 @@ function MainAppContent() {
       {/* PIN-Protected Settings Modal */}
       <SettingsModal
         isOpen={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
+        onClose={() => {
+          setBgPreviewOverrides(null);
+          setSettingsOpen(false);
+        }}
         currentPin={session.pin}
         settings={settings}
         photos={photos}
@@ -591,6 +626,7 @@ function MainAppContent() {
         onUploadPhoto={handleUploadPhoto}
         onDeletePhoto={handleDeletePhoto}
         onSignOut={handleSignOut}
+        onPreviewBackgroundControls={setBgPreviewOverrides}
       />
     </div>
   );
