@@ -5,15 +5,18 @@ import {
   HelpCircle,
   Images,
   Settings,
+  Sparkles,
   Volume2,
   VolumeX,
   WifiOff,
+  X,
 } from 'lucide-react';
 import {
   DEFAULT_ROOM_SETTINGS,
   EncryptedRoomSettings,
   MainTab,
   MediaBackgroundConfig,
+  MysteryCardsLiveState,
   PartnerPresenceData,
   PartnerRole,
   PhotosLiveState,
@@ -29,6 +32,7 @@ import {
   reEncryptRoomOnPinChange,
   saveRoomSettings,
   subscribeLiveState,
+  subscribeMysteryCardsState,
   subscribePartnerPresence,
   subscribeRoomSettings,
   subscribeSharedBackground,
@@ -39,6 +43,7 @@ import {
   uploadEncryptedPhoto,
   uploadSharedBackground,
   writeLiveState,
+  writeMysteryCardsState,
 } from './services/firebase';
 import {
   deleteEncryptedLocalMedia,
@@ -57,7 +62,9 @@ import {
 import {SpinWheelTab} from './components/SpinWheelTab';
 import {QuizTab} from './components/QuizTab';
 import {PhotosTab} from './components/PhotosTab';
+import {MysteryCardsTab} from './components/MysteryCardsTab';
 import {PartnerSyncTab} from './components/PartnerSyncTab';
+import {LoveCounterBar} from './components/LoveCounterBar';
 import {SettingsModal} from './components/SettingsModal';
 
 const DEFAULT_BG_IMAGE = '/src/assets/images/default_romantic_bg_1795637641791.jpg';
@@ -76,6 +83,7 @@ function MainAppContent() {
   const [wheelState, setWheelState] = useState<WheelLiveState | null>(null);
   const [quizState, setQuizState] = useState<QuizRoundState | null>(null);
   const [photosState, setPhotosState] = useState<PhotosLiveState | null>(null);
+  const [cardsState, setCardsState] = useState<MysteryCardsLiveState | null>(null);
   const [photos, setPhotos] = useState<SharedPhotoItem[]>([]);
   const [malePresence, setMalePresence] = useState<PartnerPresenceData | null>(null);
   const [femalePresence, setFemalePresence] = useState<PartnerPresenceData | null>(
@@ -86,7 +94,8 @@ function MainAppContent() {
   const [showEntrance, setShowEntrance] = useState(false);
   const [activeReaction, setActiveReaction] = useState<ReactionEvent | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [muted, setMuted] = useState(false);
+  const [partnerModalOpen, setPartnerModalOpen] = useState(false);
+  const [muted, setMuted] = useState<boolean>(() => soundEngine.muted);
   const [localBgUrl, setLocalBgUrl] = useState<string>('');
   const [syncedBgPayload, setSyncedBgPayload] =
     useState<SyncedBackgroundPayload | null>(null);
@@ -179,6 +188,7 @@ function MainAppContent() {
       'photos',
       setPhotosState
     );
+    const unsubCards = subscribeMysteryCardsState(roomId, pin, setCardsState);
     const unsubBackground = subscribeSharedBackground(roomId, pin, (bg) => {
       if (!bg) return;
       setSyncedBgPayload(bg);
@@ -245,6 +255,7 @@ function MainAppContent() {
       unsubWheel();
       unsubQuiz();
       unsubPhotos();
+      unsubCards();
       unsubBackground();
       unsubGallery();
       unsubReaction();
@@ -313,7 +324,8 @@ function MainAppContent() {
         photos,
         malePresence,
         femalePresence,
-        syncedBgPayload
+        syncedBgPayload,
+        cardsState
       );
       setSettings({...nextSettings, passcode: newPin});
       setSession({...session, pin: newPin});
@@ -328,6 +340,7 @@ function MainAppContent() {
       malePresence,
       femalePresence,
       syncedBgPayload,
+      cardsState,
     ]
   );
 
@@ -436,6 +449,12 @@ function MainAppContent() {
   const effectiveBgFit =
     bgPreviewOverrides?.backgroundFit ?? settings.backgroundFit ?? 'cover';
 
+  const partnerPresence = session.role === 'male' ? femalePresence : malePresence;
+  const isPartnerOnline = Boolean(
+    partnerPresence?.online &&
+      Date.now() - (partnerPresence?.lastSeen || 0) < 90000
+  );
+
   return (
     <div className="relative flex h-[100dvh] w-screen flex-col overflow-hidden bg-[#140309] text-rose-50">
       {/* Dynamic Custom Background (Static Image, Looping Video, or GIF) */}
@@ -481,6 +500,19 @@ function MainAppContent() {
         <header className="relative flex h-10 shrink-0 items-center justify-between gap-2 rounded-2xl border border-rose-300/25 bg-black/50 px-2 backdrop-blur-xl shadow-lg">
           {/* Top-Left Controls (forced left position in RTL via order/dir) */}
           <div className="flex items-center gap-1 shrink-0 order-last">
+            <button
+              type="button"
+              onClick={() => setPartnerModalOpen(true)}
+              aria-label="حالة الشريك وإرسال نبضة"
+              className="relative flex h-8 w-8 items-center justify-center rounded-xl bg-white/10 text-rose-100 hover:bg-rose-500/30 transition"
+            >
+              <HeartHandshake className="h-4 w-4" />
+              <span
+                className={`absolute top-1 right-1 h-2 w-2 rounded-full ${
+                  isPartnerOnline ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400/50'
+                }`}
+              />
+            </button>
             <button
               type="button"
               onClick={() => {
@@ -530,7 +562,7 @@ function MainAppContent() {
               {id: 'wheel' as MainTab, label: 'عجلة الحظ', Icon: Disc3},
               {id: 'quiz' as MainTab, label: 'مسابقة', Icon: HelpCircle},
               {id: 'photos' as MainTab, label: 'صور عشوائية', Icon: Images},
-              {id: 'partner' as MainTab, label: 'حالة الشريك', Icon: HeartHandshake},
+              {id: 'cards' as MainTab, label: 'كروت الحظ', Icon: Sparkles},
             ] as const
           ).map(({id, label, Icon}) => {
             const active = activeTab === id;
@@ -539,7 +571,7 @@ function MainAppContent() {
                 key={id}
                 type="button"
                 onClick={() => setActiveTab(id)}
-                className={`flex min-h-[44px] flex-col items-center justify-center gap-0.5 rounded-2xl border px-1 py-1 text-[10px] sm:text-xs font-extrabold leading-tight break-words transition ${
+                className={`flex min-h-[42px] flex-col items-center justify-center gap-0.5 rounded-2xl border px-1 py-1 text-[10px] sm:text-xs font-extrabold leading-tight break-words transition ${
                   active
                     ? 'border-rose-300/60 bg-gradient-to-b from-rose-600 to-rose-700 text-white shadow-lg backdrop-blur-xl'
                     : 'border-rose-200/20 bg-black/55 text-rose-100/90 backdrop-blur-xl hover:bg-black/65'
@@ -552,8 +584,15 @@ function MainAppContent() {
           })}
         </nav>
 
+        {/* Digital Love & Anniversary Counter Bar */}
+        <LoveCounterBar
+          roomId={session.roomId}
+          settings={settings}
+          onOpenSettings={() => setSettingsOpen(true)}
+        />
+
         {/* Active Tab Viewport Container */}
-        <main className="mt-2 flex-1 min-h-0 overflow-hidden rounded-3xl border border-rose-200/20 bg-black/15 p-2.5 sm:p-3.5 backdrop-blur-[2px] shadow-xl">
+        <main className="mt-1.5 flex-1 min-h-0 overflow-hidden rounded-3xl border border-rose-200/20 bg-black/15 p-2.5 sm:p-3.5 backdrop-blur-[2px] shadow-xl">
           {activeTab === 'wheel' && (
             <SpinWheelTab
               role={session.role}
@@ -591,27 +630,59 @@ function MainAppContent() {
             />
           )}
 
-          {activeTab === 'partner' && (
-            <PartnerSyncTab
+          {activeTab === 'cards' && (
+            <MysteryCardsTab
               role={session.role}
-              roomId={session.roomId}
-              malePresence={malePresence}
-              femalePresence={femalePresence}
-              onSendKissPing={async (evt, note) => {
-                await updatePartnerPresence(session.roomId, session.pin, session.role, {
-                  role: session.role,
-                  online: true,
-                  lastSeen: Date.now(),
-                  lastPingAt: Date.now(),
-                  pingMessage: note,
-                  pingId: evt.id,
-                });
-                await writeLiveState(session.roomId, session.pin, 'reaction', evt);
-              }}
+              cardsPool={settings.mysteryCards}
+              cardsState={cardsState}
+              onUpdateCards={(next) =>
+                writeMysteryCardsState(session.roomId, session.pin, next)
+              }
+              onTriggerReaction={(evt) =>
+                writeLiveState(session.roomId, session.pin, 'reaction', evt)
+              }
             />
           )}
         </main>
       </div>
+
+      {/* Partner Presence & Kiss Ping Modal Overlay */}
+      {partnerModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-3 backdrop-blur-md">
+          <div className="relative flex max-h-[82dvh] w-full max-w-md flex-col overflow-hidden rounded-3xl border border-rose-300/30 bg-[#1a050e]/95 p-3.5 text-rose-50 shadow-2xl">
+            <div className="mb-2 flex items-center justify-between border-b border-rose-300/15 pb-2">
+              <span className="text-sm font-extrabold text-white">حالة الشريك والنبضات</span>
+              <button
+                type="button"
+                onClick={() => setPartnerModalOpen(false)}
+                aria-label="إغلاق حالة الشريك"
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white hover:bg-rose-600 transition"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="flex-1 min-h-0 overflow-hidden">
+              <PartnerSyncTab
+                role={session.role}
+                roomId={session.roomId}
+                malePresence={malePresence}
+                femalePresence={femalePresence}
+                onSendKissPing={async (evt, note) => {
+                  await updatePartnerPresence(session.roomId, session.pin, session.role, {
+                    role: session.role,
+                    online: true,
+                    lastSeen: Date.now(),
+                    lastPingAt: Date.now(),
+                    pingMessage: note,
+                    pingId: evt.id,
+                  });
+                  await writeLiveState(session.roomId, session.pin, 'reaction', evt);
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Login Entrance Walking & Kiss-Blowing Character */}
       {showEntrance && (

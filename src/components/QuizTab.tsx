@@ -1,4 +1,4 @@
-import React, {useEffect, useMemo, useState} from 'react';
+import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {
   Award,
   Clock,
@@ -49,6 +49,7 @@ export const QuizTab: React.FC<QuizTabProps> = ({
   const [secondsLeft, setSecondsLeft] = useState(QUESTION_SECONDS);
   const [generating, setGenerating] = useState(false);
   const [genMessage, setGenMessage] = useState<string | null>(null);
+  const lastCountdownTickRef = useRef<number>(-1);
 
   const allQuestions = useMemo(
     () => [...BASE_QUESTIONS, ...(settings.customQuestions || [])],
@@ -64,16 +65,24 @@ export const QuizTab: React.FC<QuizTabProps> = ({
 
   // Countdown timer synced to questionStartedAt
   useEffect(() => {
-    if (!quizState || quizState.status !== 'playing') return;
+    if (!quizState || quizState.status !== 'playing') {
+      lastCountdownTickRef.current = -1;
+      return;
+    }
 
+    lastCountdownTickRef.current = -1;
     const updateTimer = () => {
       const elapsed = Math.floor((Date.now() - quizState.questionStartedAt) / 1000);
       const rem = Math.max(0, QUESTION_SECONDS - elapsed);
       setSecondsLeft(rem);
+      if (rem >= 1 && rem <= 5 && rem !== lastCountdownTickRef.current) {
+        lastCountdownTickRef.current = rem;
+        soundEngine.playCountdownTick(rem);
+      }
     };
 
     updateTimer();
-    const interval = setInterval(updateTimer, 500);
+    const interval = setInterval(updateTimer, 300);
     return () => clearInterval(interval);
   }, [quizState]);
 

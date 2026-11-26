@@ -24,6 +24,7 @@ import {
   DEFAULT_ROOM_SETTINGS,
   EncryptedRoomSettings,
   MediaBackgroundConfig,
+  MysteryCardsLiveState,
   PartnerPresenceData,
   PartnerRole,
   PhotosLiveState,
@@ -269,6 +270,32 @@ export async function saveRoomSettings(
       joinCodeHash,
       updatedAt: serverTimestamp(),
     });
+    if (rtdb) {
+      const cardsCipher = encryptPayload(
+        nextSettings.mysteryCards || DEFAULT_ROOM_SETTINGS.mysteryCards,
+        roomId,
+        targetPin
+      );
+      const anniversaryCipher = encryptPayload(
+        {
+          anniversaryDate: nextSettings.anniversaryDate || '',
+          upcomingEventDate: nextSettings.upcomingEventDate || '',
+          upcomingEventTitle: nextSettings.upcomingEventTitle || '',
+        },
+        roomId,
+        targetPin
+      );
+      await Promise.allSettled([
+        dbSet(dbRef(rtdb, `shared/${roomId}/cardsPool`), {
+          encryptedData: cardsCipher,
+          updatedAt: Date.now(),
+        }),
+        dbSet(dbRef(rtdb, `shared/${roomId}/anniversary`), {
+          encryptedData: anniversaryCipher,
+          updatedAt: Date.now(),
+        }),
+      ]);
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);
   }
@@ -706,6 +733,77 @@ export async function deleteEncryptedPhoto(
   }
 }
 
+export async function writeMysteryCardsState(
+  roomId: string,
+  passcode: string,
+  payload: MysteryCardsLiveState
+): Promise<void> {
+  const encryptedData = encryptPayload(payload, roomId, passcode);
+  try {
+    localStorage.setItem(`nabd_cards_${roomId}`, encryptedData);
+  } catch {
+    // ignore storage quota
+  }
+  if (rtdb) {
+    await withTimeout(
+      dbSet(dbRef(rtdb, `shared/${roomId}/cards`), {
+        encryptedData,
+        updatedAt: payload.updatedAt,
+      }),
+      12000,
+      'انتهت مهلة مزامنة كروت الحظ.'
+    );
+  }
+}
+
+export function subscribeMysteryCardsState(
+  roomId: string,
+  passcode: string,
+  onData: (data: MysteryCardsLiveState | null) => void
+) {
+  let latestTs = 0;
+
+  try {
+    const cached = localStorage.getItem(`nabd_cards_${roomId}`);
+    if (cached) {
+      const decoded = decryptPayload<MysteryCardsLiveState>(cached, roomId, passcode);
+      if (decoded) {
+        latestTs = decoded.updatedAt || 0;
+        onData(decoded);
+      }
+    }
+  } catch {
+    // ignore cache error
+  }
+
+  if (!rtdb) return () => {};
+  const cardsRef = dbRef(rtdb, `shared/${roomId}/cards`);
+  return onValue(
+    cardsRef,
+    (snapshot) => {
+      const val = snapshot.val() as {encryptedData?: string} | null;
+      if (!val?.encryptedData) return;
+      const decoded = decryptPayload<MysteryCardsLiveState>(
+        val.encryptedData,
+        roomId,
+        passcode
+      );
+      if (decoded && (decoded.updatedAt || 0) >= latestTs) {
+        latestTs = decoded.updatedAt || 0;
+        try {
+          localStorage.setItem(`nabd_cards_${roomId}`, val.encryptedData);
+        } catch {
+          // ignore
+        }
+        onData(decoded);
+      }
+    },
+    () => {
+      // keep local cache active
+    }
+  );
+}
+
 export async function reEncryptRoomOnPinChange(
   roomId: string,
   oldPin: string,
@@ -718,7 +816,8 @@ export async function reEncryptRoomOnPinChange(
   photos: SharedPhotoItem[],
   presenceMale: PartnerPresenceData | null,
   presenceFemale: PartnerPresenceData | null,
-  backgroundState?: SyncedBackgroundPayload | null
+  backgroundState?: SyncedBackgroundPayload | null,
+  cardsState?: MysteryCardsLiveState | null
 ): Promise<void> {
   const deviceUid = getDeviceUid();
   await saveRoomSettings(roomId, oldPin, {...nextSettings, passcode: newPin});
@@ -728,6 +827,9 @@ export async function reEncryptRoomOnPinChange(
   if (presenceMale) await updatePartnerPresence(roomId, newPin, 'male', presenceMale);
   if (presenceFemale)
     await updatePartnerPresence(roomId, newPin, 'female', presenceFemale);
+  if (cardsState) {
+    await writeMysteryCardsState(roomId, newPin, cardsState).catch(() => {});
+  }
 
   if (backgroundState) {
     const bgCipher = encryptPayload(backgroundState, roomId, newPin);

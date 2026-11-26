@@ -1,5 +1,6 @@
 import React, {useState} from 'react';
 import {
+  CalendarHeart,
   Download,
   Eye,
   Image as ImageIcon,
@@ -15,8 +16,10 @@ import {
   ZoomOut,
 } from 'lucide-react';
 import {
+  DEFAULT_MYSTERY_CARDS,
   EncryptedRoomSettings,
   MediaBackgroundConfig,
+  MysteryCardItem,
   QuizRewardButton,
   SharedPhotoItem,
   WheelSegment,
@@ -24,7 +27,13 @@ import {
 import {compressImageFile} from '../services/mediaStore';
 import {usePWAInstall} from '../hooks/usePWAInstall';
 
-type SettingsSection = 'general' | 'background' | 'wheel' | 'quiz' | 'photos';
+type SettingsSection =
+  | 'general'
+  | 'background'
+  | 'wheel'
+  | 'quiz'
+  | 'cards'
+  | 'photos';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -92,8 +101,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   );
   const [livePreviewMode, setLivePreviewMode] = useState(false);
   const [allowZoom, setAllowZoom] = useState(settings.allowZoom);
+  const [anniversaryDate, setAnniversaryDate] = useState(
+    settings.anniversaryDate || ''
+  );
+  const [upcomingEventDate, setUpcomingEventDate] = useState(
+    settings.upcomingEventDate || ''
+  );
+  const [upcomingEventTitle, setUpcomingEventTitle] = useState(
+    settings.upcomingEventTitle || ''
+  );
   const [wheelSegments, setWheelSegments] = useState<WheelSegment[]>(settings.wheelSegments);
   const [quizRewards, setQuizRewards] = useState<QuizRewardButton[]>(settings.quizRewards);
+  const [mysteryCards, setMysteryCards] = useState<MysteryCardItem[]>(
+    settings.mysteryCards && settings.mysteryCards.length > 0
+      ? settings.mysteryCards
+      : DEFAULT_MYSTERY_CARDS
+  );
   const [photoCaption, setPhotoCaption] = useState('');
   const [bgDirectUrl, setBgDirectUrl] = useState('');
   const [bgDirectUrlType, setBgDirectUrlType] = useState<'image' | 'video'>('video');
@@ -153,8 +176,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setBackgroundFit(settings.backgroundFit ?? 'cover');
       setLivePreviewMode(false);
       setAllowZoom(settings.allowZoom);
+      setAnniversaryDate(settings.anniversaryDate || '');
+      setUpcomingEventDate(settings.upcomingEventDate || '');
+      setUpcomingEventTitle(settings.upcomingEventTitle || '');
       setWheelSegments(settings.wheelSegments);
       setQuizRewards(settings.quizRewards);
+      setMysteryCards(
+        settings.mysteryCards && settings.mysteryCards.length > 0
+          ? settings.mysteryCards
+          : DEFAULT_MYSTERY_CARDS
+      );
       setNewPin('');
     } else {
       setPinError('الرمز السري غير صحيح.');
@@ -178,6 +209,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         .filter((r) => r.label.length > 0)
         .map((r) => ({...r}));
 
+      const cleanedCards = mysteryCards
+        .filter((c) => c.text.trim().length > 0)
+        .map((c) => ({...c, text: c.text.trim()}));
+
       const nextSettings: EncryptedRoomSettings = {
         ...settings,
         bannerText: bannerText.trim() || settings.bannerText,
@@ -185,8 +220,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         backgroundScale,
         backgroundFit,
         allowZoom,
+        anniversaryDate: anniversaryDate.trim(),
+        upcomingEventDate: upcomingEventDate.trim(),
+        upcomingEventTitle: upcomingEventTitle.trim(),
         wheelSegments: cleanedWheel.length > 0 ? cleanedWheel : settings.wheelSegments,
         quizRewards: cleanedRewards.length > 0 ? cleanedRewards : settings.quizRewards,
+        mysteryCards:
+          cleanedCards.length > 0 ? cleanedCards : DEFAULT_MYSTERY_CARDS,
       };
 
       const trimmedPin = newPin.trim();
@@ -407,14 +447,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </form>
         ) : (
           <>
-            {/* Section Tabs (max 4 in row, clean wrap for 5th) */}
-            <div className="grid grid-cols-5 gap-1 border-b border-rose-300/15 p-2 bg-black/25">
+            {/* Section Tabs (max 3 per row for clean mobile readability) */}
+            <div className="grid grid-cols-3 gap-1 border-b border-rose-300/15 p-2 bg-black/25">
               {(
                 [
                   ['general', 'عام'],
                   ['background', 'الخلفية'],
                   ['wheel', 'العجلة'],
                   ['quiz', 'مسابقة'],
+                  ['cards', 'الكروت'],
                   ['photos', 'الصور'],
                 ] as Array<[SettingsSection, string]>
               ).map(([id, label]) => (
@@ -422,7 +463,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   key={id}
                   type="button"
                   onClick={() => setSection(id)}
-                  className={`min-h-[38px] rounded-xl px-1 text-[11px] font-bold transition ${
+                  className={`min-h-[36px] rounded-xl px-1 text-[11px] font-bold transition ${
                     section === id
                       ? 'bg-rose-600 text-white shadow'
                       : 'bg-white/5 text-rose-200 hover:bg-white/10'
@@ -469,6 +510,55 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       placeholder="اتركه فارغاً للإبقاء على الرمز الحالي"
                       className="font-mono-num w-full rounded-xl border border-rose-300/25 bg-black/45 px-3 py-2 text-xs text-white focus:border-rose-400 focus:outline-none"
                     />
+                  </div>
+
+                  {/* Anniversary & Upcoming Special Date */}
+                  <div className="rounded-2xl border border-rose-300/20 bg-black/35 p-3 space-y-2.5">
+                    <div className="flex items-center gap-1.5 text-xs font-extrabold text-amber-200">
+                      <CalendarHeart className="h-4 w-4 text-rose-400" />
+                      <span>عداد الذكريات والمناسبات</span>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-rose-200 mb-1">
+                        تاريخ بداية ارتباطنا / زواجنا
+                      </label>
+                      <input
+                        type="date"
+                        dir="ltr"
+                        value={anniversaryDate}
+                        onChange={(e) => setAnniversaryDate(e.target.value)}
+                        className="font-mono-num w-full rounded-xl border border-rose-300/25 bg-black/45 px-3 py-2 text-xs text-white focus:border-rose-400 focus:outline-none"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[11px] font-bold text-rose-200 mb-1">
+                          مناسبة قادمة (اختياري)
+                        </label>
+                        <input
+                          type="date"
+                          dir="ltr"
+                          value={upcomingEventDate}
+                          onChange={(e) => setUpcomingEventDate(e.target.value)}
+                          className="font-mono-num w-full rounded-xl border border-rose-300/25 bg-black/45 px-2 py-2 text-xs text-white focus:border-rose-400 focus:outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-rose-200 mb-1">
+                          اسم المناسبة
+                        </label>
+                        <input
+                          type="text"
+                          value={upcomingEventTitle}
+                          onChange={(e) => setUpcomingEventTitle(e.target.value)}
+                          placeholder="عيد ميلادك، ذكرى..."
+                          maxLength={40}
+                          className="w-full rounded-xl border border-rose-300/25 bg-black/45 px-2.5 py-2 text-xs text-white focus:border-rose-400 focus:outline-none"
+                        />
+                      </div>
+                    </div>
                   </div>
 
                   <label className="flex items-center justify-between rounded-xl border border-rose-300/20 bg-black/30 px-3 py-2.5 cursor-pointer">
@@ -854,6 +944,70 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   >
                     <RotateCcw className="h-3.5 w-3.5" />
                     <span>تصفير سجل الأسئلة المستخدمة ({settings.askedQuestionIds.length})</span>
+                  </button>
+                </div>
+              )}
+
+              {section === 'cards' && (
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-rose-200">
+                      نصوص كروت المفاجآت اليومية
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setMysteryCards((prev) => [
+                          ...prev,
+                          {id: `c_${Date.now()}`, text: 'مفاجأة جديدة ❤️'},
+                        ])
+                      }
+                      className="flex items-center gap-1 rounded-xl bg-rose-600 px-2.5 py-1.5 text-[11px] font-bold text-white"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      <span>إضافة كارت</span>
+                    </button>
+                  </div>
+
+                  {mysteryCards.map((card, idx) => (
+                    <div
+                      key={card.id}
+                      className="flex items-center gap-2 rounded-xl border border-rose-300/20 bg-black/35 p-2"
+                    >
+                      <input
+                        type="text"
+                        value={card.text}
+                        maxLength={70}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setMysteryCards((prev) =>
+                            prev.map((item, i) =>
+                              i === idx ? {...item, text: val} : item
+                            )
+                          );
+                        }}
+                        className="flex-1 rounded-lg border border-rose-300/20 bg-black/45 px-2.5 py-1.5 text-xs text-white"
+                      />
+                      <button
+                        type="button"
+                        disabled={mysteryCards.length <= 4}
+                        onClick={() =>
+                          setMysteryCards((prev) => prev.filter((_, i) => i !== idx))
+                        }
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-rose-900/60 text-rose-200 hover:bg-rose-700 disabled:opacity-35"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  ))}
+
+                  <button
+                    type="button"
+                    onClick={() => setMysteryCards(DEFAULT_MYSTERY_CARDS)}
+                    className="flex w-full min-h-[38px] items-center justify-center gap-1.5 rounded-xl bg-white/10 text-xs font-bold text-rose-100 hover:bg-white/20"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    <span>استعادة الكروت الافتراضية</span>
                   </button>
                 </div>
               )}

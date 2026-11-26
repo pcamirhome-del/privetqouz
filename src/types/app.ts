@@ -1,6 +1,6 @@
 export type PartnerRole = 'male' | 'female';
 
-export type MainTab = 'wheel' | 'quiz' | 'photos' | 'partner';
+export type MainTab = 'wheel' | 'quiz' | 'photos' | 'cards';
 
 export type QuizCategory = 'arts' | 'history' | 'sports';
 
@@ -44,6 +44,10 @@ export interface EncryptedRoomSettings {
   backgroundFit?: 'cover' | 'contain';
   wheelSegments: WheelSegment[];
   quizRewards: QuizRewardButton[];
+  mysteryCards?: MysteryCardItem[];
+  anniversaryDate?: string;
+  upcomingEventDate?: string;
+  upcomingEventTitle?: string;
   askedQuestionIds: string[];
   customQuestions: QuizQuestion[];
   allowZoom: boolean;
@@ -127,6 +131,29 @@ export interface PhotosLiveState {
   updatedAt: number;
 }
 
+export interface MysteryCardItem {
+  id: string;
+  text: string;
+}
+
+export interface FlippedCardRecord {
+  slotIndex: number;
+  cardId: string;
+  text: string;
+  flippedBy: PartnerRole;
+  flippedAt: number;
+  dayKey: string;
+}
+
+export interface MysteryCardsLiveState {
+  dayKey: string;
+  boardSlots: MysteryCardItem[];
+  maleFlip?: FlippedCardRecord | null;
+  femaleFlip?: FlippedCardRecord | null;
+  lastFlipped?: FlippedCardRecord | null;
+  updatedAt: number;
+}
+
 export const DEFAULT_WHEEL_SEGMENTS: WheelSegment[] = [
   {id: 'w1', label: 'مم', weight: 18, color: '#be123c'},
   {id: 'w2', label: 'ممم', weight: 18, color: '#9f1239'},
@@ -146,6 +173,15 @@ export const DEFAULT_QUIZ_REWARDS: QuizRewardButton[] = [
   {id: 'r6', label: 'تجهيز عشاء او غداء علي حسب الطلب'},
 ];
 
+export const DEFAULT_MYSTERY_CARDS: MysteryCardItem[] = [
+  {id: 'c1', text: 'قهوة على ذوقك'},
+  {id: 'c2', text: 'تدليك للرأس 10 دقائق'},
+  {id: 'c3', text: 'اختيار فيلم السهرة'},
+  {id: 'c4', text: 'عشاء مفاجئ من اختيارك'},
+  {id: 'c5', text: 'إعفاء من أي طلب اليوم'},
+  {id: 'c6', text: 'رسالة صوتية رومانسية طويلة'},
+];
+
 export const DEFAULT_ROOM_SETTINGS: EncryptedRoomSettings = {
   passcode: '0000',
   bannerText: 'أنتِ أجمل أقداري... كل لحظة تجمعنا نبض وحياة ❤️💋',
@@ -155,6 +191,10 @@ export const DEFAULT_ROOM_SETTINGS: EncryptedRoomSettings = {
   backgroundFit: 'cover',
   wheelSegments: DEFAULT_WHEEL_SEGMENTS,
   quizRewards: DEFAULT_QUIZ_REWARDS,
+  mysteryCards: DEFAULT_MYSTERY_CARDS,
+  anniversaryDate: '',
+  upcomingEventDate: '',
+  upcomingEventTitle: '',
   askedQuestionIds: [],
   customQuestions: [],
   allowZoom: false,
