@@ -1,11 +1,11 @@
 {
   "headers": [
     {
-      "source": "/(index.html|sw.js|registerSW.js|manifest.webmanifest|manifest.json)",
+      "source": "/(index.html|sw.js|registerSW.js|manifest.webmanifest|manifest.json|version.json)",
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "no-cache, no-store, must-revalidate"
+          "value": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0"
         }
       ]
     }

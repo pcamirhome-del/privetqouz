@@ -35,9 +35,11 @@ import {
   compressImageFile,
   computeImageFingerprint,
   isDuplicatePhoto,
+  isGifFile,
 } from '../services/mediaStore';
 import {usePWAInstall} from '../hooks/usePWAInstall';
 import {ambientAudio} from '../services/ambientAudio';
+import {forceHardUpdateAndReload} from '../services/pwaUpdater';
 
 type SettingsSection =
   | 'general'
@@ -344,7 +346,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setStatusMsg('جاري ضغط الخلفية وتشفيرها ومزامنتها...');
     try {
       const isVideo = file.type.startsWith('video/');
-      const isGif = file.type === 'image/gif';
+      const isGif = isGifFile(file);
       const mediaType: MediaBackgroundConfig['type'] = isVideo
         ? 'video'
         : isGif
@@ -911,6 +913,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                   <button
                     type="button"
+                    onClick={() => {
+                      void forceHardUpdateAndReload();
+                    }}
+                    className="flex w-full min-h-[40px] items-center justify-center gap-2 rounded-xl border border-amber-300/30 bg-amber-500/15 px-3 text-xs font-extrabold text-amber-100 hover:bg-amber-500/25 transition"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    <span>تحديث التطبيق 🔄</span>
+                  </button>
+
+                  <button
+                    type="button"
                     onClick={onSignOut}
                     className="flex w-full min-h-[42px] items-center justify-center gap-2 rounded-xl border border-rose-400/30 bg-rose-950/60 px-3 text-xs font-bold text-rose-200 hover:bg-rose-900"
                   >
@@ -932,7 +945,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </span>
                     <input
                       type="file"
-                      accept="image/*,video/mp4,video/webm"
+                      accept="image/*,.gif,video/mp4,video/webm"
                       disabled={busy}
                       onChange={handleBackgroundFile}
                       className="hidden"
@@ -1355,7 +1368,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </span>
                     <input
                       type="file"
-                      accept="image/*"
+                      accept="image/*,.gif"
                       multiple
                       onChange={handlePhotoUpload}
                       className="hidden"

@@ -80,13 +80,19 @@ export function fileToDataUrl(file: File): Promise<string> {
   });
 }
 
+export function isGifFile(file: File): boolean {
+  return (
+    file.type === 'image/gif' || file.name.toLowerCase().endsWith('.gif')
+  );
+}
+
 export async function compressImageFile(
   file: File,
   maxDim = 900,
   maxDataUrlBytes = 350 * 1024,
   initialQuality = 0.75
 ): Promise<string> {
-  if (file.type === 'image/gif') {
+  if (isGifFile(file)) {
     return fileToDataUrl(file);
   }
 
@@ -154,7 +160,7 @@ export async function compressImageToBlob(
   maxDim = 1440,
   quality = 0.84
 ): Promise<Blob> {
-  if (file.type === 'image/gif' || file.type.startsWith('video/')) {
+  if (isGifFile(file) || file.type.startsWith('video/')) {
     return file;
   }
 

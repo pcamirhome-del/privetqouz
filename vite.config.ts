@@ -48,7 +48,19 @@ function obfuscateAppBundlePlugin() {
 }
 
 export default defineConfig(() => {
+  const appBuildId = Date.now().toString();
+  const publicDir = path.resolve(__dirname, 'public');
+  if (fs.existsSync(publicDir)) {
+    fs.writeFileSync(
+      path.join(publicDir, 'version.json'),
+      JSON.stringify({version: appBuildId})
+    );
+  }
+
   return {
+    define: {
+      __APP_BUILD_ID__: JSON.stringify(appBuildId),
+    },
     plugins: [
       react(),
       tailwindcss(),
@@ -100,19 +112,15 @@ export default defineConfig(() => {
           clientsClaim: true,
           cleanupOutdatedCaches: true,
           maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
-          globPatterns: ['**/*.{ico,png,svg,jpg,woff,woff2}'],
-          navigateFallbackDenylist: [/^\/api\//],
+          globPatterns: ['**/*.{ico,png,svg,woff,woff2}'],
+          navigateFallback: null,
           runtimeCaching: [
             {
-              urlPattern: ({request}) => request.mode === 'navigate',
-              handler: 'NetworkFirst',
-              options: {
-                cacheName: 'html-pages-cache',
-                networkTimeoutSeconds: 3,
-                cacheableResponse: {
-                  statuses: [0, 200],
-                },
-              },
+              urlPattern: ({request, url}) =>
+                request.mode === 'navigate' ||
+                /\.html$/i.test(url.pathname) ||
+                /\.json$/i.test(url.pathname),
+              handler: 'NetworkOnly',
             },
             {
               urlPattern: ({request, url}) =>
@@ -176,9 +184,7 @@ export default defineConfig(() => {
         },
       }),
       obfuscateAppBundlePlugin(),
-      // Copies src/assets into dist/ so root-relative URLs like
-      // "/src/assets/images/..." (e.g. generate_image output) still resolve
-      // in production builds. Do not remove.
+      // Copies src/assets into dist/ and writes dist/version.json
       {
         name: 'copy-unbundled-src-assets',
         apply: 'build',
@@ -187,6 +193,12 @@ export default defineConfig(() => {
             return;
           }
           const distDir = path.resolve(__dirname, 'dist');
+          if (fs.existsSync(distDir)) {
+            fs.writeFileSync(
+              path.join(distDir, 'version.json'),
+              JSON.stringify({version: appBuildId})
+            );
+          }
           const srcAssets = path.resolve(__dirname, 'src/assets');
           const distAssets = path.resolve(distDir, 'src/assets');
           if (fs.existsSync(distDir) && fs.existsSync(srcAssets)) {
