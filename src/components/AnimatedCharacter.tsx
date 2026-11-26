@@ -314,16 +314,23 @@ const DisneyPrincessSvg: React.FC<CharacterSvgProps> = ({
 export const EntranceCharacterOverlay: React.FC<{
   role: PartnerRole;
   onDismiss?: () => void;
-}> = ({role}) => {
+}> = ({role, onDismiss}) => {
   const [phase, setPhase] = useState<'wave' | 'dance' | 'kiss' | 'walk'>('wave');
   const [side, setSide] = useState<'right' | 'left'>('right');
 
   useEffect(() => {
+    const dismissTimer = setTimeout(() => {
+      onDismiss?.();
+    }, 10000);
+    return () => clearTimeout(dismissTimer);
+  }, [onDismiss]);
+
+  useEffect(() => {
     const cycle = [
-      {p: 'wave' as const, ms: 2200},
-      {p: 'dance' as const, ms: 2400},
-      {p: 'kiss' as const, ms: 2000},
-      {p: 'walk' as const, ms: 2600},
+      {p: 'wave' as const, ms: 2000},
+      {p: 'walk' as const, ms: 2400},
+      {p: 'kiss' as const, ms: 1800},
+      {p: 'walk' as const, ms: 2400},
     ];
     let idx = 0;
     let timer: ReturnType<typeof setTimeout>;
@@ -332,7 +339,7 @@ export const EntranceCharacterOverlay: React.FC<{
       idx = (idx + 1) % cycle.length;
       const next = cycle[idx];
       setPhase(next.p);
-      if (next.p === 'wave') {
+      if (next.p === 'wave' || next.p === 'kiss') {
         setSide((prev) => (prev === 'right' ? 'left' : 'right'));
       }
       timer = setTimeout(advance, next.ms);
@@ -353,11 +360,17 @@ export const EntranceCharacterOverlay: React.FC<{
         : 'calc(-100vw + 100% + 4px)';
 
   return (
-    <div className="pointer-events-none fixed bottom-1 inset-x-0 z-30 h-28 overflow-hidden">
+    <motion.div
+      initial={{opacity: 0, y: 16}}
+      animate={{opacity: 1, y: 0}}
+      exit={{opacity: 0, y: 20}}
+      transition={{duration: 0.45}}
+      className="pointer-events-none fixed bottom-1 inset-x-0 z-30 h-28 overflow-hidden"
+    >
       <motion.div
         animate={{x: targetX}}
         transition={{
-          duration: phase === 'walk' ? 2.5 : 0.5,
+          duration: phase === 'walk' ? 2.3 : 0.45,
           ease: 'easeInOut',
         }}
         className="pointer-events-none absolute bottom-0 right-1 w-20 h-26 sm:w-24 sm:h-30"
@@ -388,7 +401,73 @@ export const EntranceCharacterOverlay: React.FC<{
 
         <DisneyPrincessSvg mood="entrance" role={role} phase={phase} />
       </motion.div>
-    </div>
+    </motion.div>
+  );
+};
+
+export const ClappingHandsOverlay: React.FC<{
+  active: boolean;
+  label?: string;
+}> = ({active, label}) => {
+  return (
+    <AnimatePresence>
+      {active && (
+        <motion.div
+          initial={{opacity: 0, scale: 0.6}}
+          animate={{opacity: 1, scale: 1}}
+          exit={{opacity: 0, scale: 0.7}}
+          transition={{duration: 0.25}}
+          className="pointer-events-none fixed inset-0 z-50 flex flex-col items-center justify-center"
+        >
+          <div className="relative flex flex-col items-center justify-center rounded-3xl border border-amber-300/45 bg-black/65 px-7 py-5 shadow-2xl backdrop-blur-md">
+            {/* Radiating Sparkle Burst */}
+            {[0, 1, 2, 3, 4, 5].map((i) => {
+              const angle = (i * 60 * Math.PI) / 180;
+              return (
+                <motion.span
+                  key={i}
+                  initial={{opacity: 0, scale: 0.3, x: 0, y: 0}}
+                  animate={{
+                    opacity: [0, 1, 0],
+                    scale: [0.5, 1.25, 0.6],
+                    x: Math.cos(angle) * 56,
+                    y: Math.sin(angle) * 56,
+                  }}
+                  transition={{
+                    duration: 0.9,
+                    repeat: Infinity,
+                    delay: i * 0.08,
+                  }}
+                  className="absolute text-base select-none"
+                >
+                  ✨
+                </motion.span>
+              );
+            })}
+
+            {/* Animated Clapping Hands */}
+            <motion.div
+              animate={{
+                scale: [1, 1.22, 0.94, 1.22, 1],
+                rotate: [-8, 6, -6, 8, -8],
+              }}
+              transition={{
+                duration: 0.45,
+                repeat: Infinity,
+                ease: 'easeInOut',
+              }}
+              className="text-6xl sm:text-7xl select-none drop-shadow-[0_6px_18px_rgba(251,191,36,0.55)]"
+            >
+              👏
+            </motion.div>
+
+            <span className="mt-2 rounded-full bg-gradient-to-r from-amber-400 to-rose-500 px-3.5 py-1 text-xs sm:text-sm font-extrabold text-white shadow">
+              {label || 'مبروك الفوز! 👏🎉'}
+            </span>
+          </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 };
 

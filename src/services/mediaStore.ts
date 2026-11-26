@@ -1,4 +1,6 @@
+import CryptoJS from 'crypto-js';
 import {decryptPayload, encryptPayload} from './crypto';
+import type {SharedPhotoItem} from '../types/app';
 
 const DB_NAME = 'nabd_alquloob_encrypted_db';
 const STORE_NAME = 'encrypted_blobs';
@@ -192,3 +194,97 @@ export async function compressImageToBlob(
     URL.revokeObjectURL(objectUrl);
   }
 }
+
+export async function computeImageFingerprint(dataUrl: string): Promise<{
+  contentHash: string;
+  perceptualHash: string;
+}> {
+  const contentHash = CryptoJS.SHA256(dataUrl).toString(CryptoJS.enc.Hex);
+
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error('image_load_failed'));
+      el.src = dataUrl;
+    });
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 9;
+    canvas.height = 8;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return {contentHash, perceptualHash: ''};
+    ctx.drawImage(img, 0, 0, 9, 8);
+    const {data} = ctx.getImageData(0, 0, 9, 8);
+
+    // 64-bit difference hash (dHash) across 8x8 horizontal luminance gradients
+    let bits = '';
+    for (let y = 0; y < 8; y++) {
+      for (let x = 0; x < 8; x++) {
+        const leftIdx = (y * 9 + x) * 4;
+        const rightIdx = (y * 9 + x + 1) * 4;
+        const lumLeft =
+          0.299 * data[leftIdx] +
+          0.587 * data[leftIdx + 1] +
+          0.114 * data[leftIdx + 2];
+        const lumRight =
+          0.299 * data[rightIdx] +
+          0.587 * data[rightIdx + 1] +
+          0.114 * data[rightIdx + 2];
+        bits += lumLeft > lumRight ? '1' : '0';
+      }
+    }
+
+    let hex = '';
+    for (let i = 0; i < 64; i += 4) {
+      hex += parseInt(bits.slice(i, i + 4), 2).toString(16);
+    }
+    return {contentHash, perceptualHash: hex};
+  } catch {
+    return {contentHash, perceptualHash: ''};
+  }
+}
+
+function hammingDistanceHex64(a: string, b: string): number {
+  if (!a || !b || a.length !== 16 || b.length !== 16) return 999;
+  let dist = 0;
+  for (let i = 0; i < 16; i++) {
+    let x = parseInt(a[i], 16) ^ parseInt(b[i], 16);
+    while (x > 0) {
+      dist += x & 1;
+      x >>= 1;
+    }
+  }
+  return dist;
+}
+
+export async function isDuplicatePhoto(
+  candidateDataUrl: string,
+  candidateHashes: {contentHash: string; perceptualHash: string},
+  existingPhotos: SharedPhotoItem[]
+): Promise<boolean> {
+  for (const existing of existingPhotos) {
+    if (existing.dataUrl === candidateDataUrl) return true;
+    if (
+      existing.contentHash &&
+      existing.contentHash === candidateHashes.contentHash
+    ) {
+      return true;
+    }
+    let existingPhash = existing.perceptualHash || '';
+    if (!existingPhash && existing.dataUrl) {
+      const computed = await computeImageFingerprint(existing.dataUrl);
+      if (computed.contentHash === candidateHashes.contentHash) return true;
+      existingPhash = computed.perceptualHash;
+    }
+    if (
+      candidateHashes.perceptualHash &&
+      existingPhash &&
+      hammingDistanceHex64(candidateHashes.perceptualHash, existingPhash) <= 3
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+

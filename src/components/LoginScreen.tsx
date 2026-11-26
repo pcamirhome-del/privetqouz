@@ -1,11 +1,10 @@
 import React, {useState} from 'react';
 import {motion} from 'motion/react';
 import {Delete, Heart, Lock, ShieldCheck} from 'lucide-react';
-import {PartnerRole} from '../types/app';
 import {RomanticFloatingLayer} from './RomanticFloatingLayer';
 
 interface LoginScreenProps {
-  onAuthenticateRoom: (roomId: string, pin: string, role: PartnerRole) => Promise<void>;
+  onAuthenticateRoom: (roomId: string, pin: string) => Promise<void>;
   defaultRoomId: string;
 }
 
@@ -13,7 +12,6 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
   onAuthenticateRoom,
   defaultRoomId,
 }) => {
-  const [step, setStep] = useState<'pin' | 'gender'>('pin');
   const [pin, setPin] = useState('');
   const [roomId, setRoomId] = useState(defaultRoomId);
   const [showRoomEdit, setShowRoomEdit] = useState(false);
@@ -21,33 +19,30 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
   const [busy, setBusy] = useState(false);
 
   const handleDigit = (digit: string) => {
+    if (busy) return;
     setError(null);
     if (pin.length >= 6) return;
     setPin((prev) => prev + digit);
   };
 
   const handleBackspace = () => {
+    if (busy) return;
     setError(null);
     setPin((p) => p.slice(0, -1));
   };
 
-  const handlePinContinue = () => {
+  const handleLogin = async () => {
+    if (busy) return;
     if (pin.length < 4) {
-      setError('أدخل رمز الدخول المكون من 4 أرقام على الأقل (الافتراضي 0000).');
+      setError('أدخل رمز الدخول المكون من 4 أرقام (الزوج 0000 • الزوجة 1111).');
       return;
     }
-    setError(null);
-    setStep('gender');
-  };
-
-  const handleSelectRole = async (role: PartnerRole) => {
     setBusy(true);
     setError(null);
     try {
-      await onAuthenticateRoom(roomId, pin, role);
+      await onAuthenticateRoom(roomId, pin);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'تعذر الدخول إلى الغرفة.');
-      setStep('pin');
     } finally {
       setBusy(false);
     }
@@ -121,113 +116,83 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
           </div>
         )}
 
-        {step === 'pin' ? (
-          <div>
-            {/* PIN Dots */}
-            <div className="mb-3 flex items-center justify-center gap-3">
-              {[0, 1, 2, 3].map((i) => (
-                <div
-                  key={i}
-                  className={`h-3.5 w-3.5 rounded-full border transition-all ${
-                    pin.length > i
-                      ? 'scale-110 border-rose-300 bg-rose-400 shadow-[0_0_12px_rgba(251,113,133,0.8)]'
-                      : 'border-rose-300/40 bg-white/5'
-                  }`}
-                />
-              ))}
-              {pin.length > 4 && (
-                <span className="font-mono-num text-xs text-rose-200">
-                  +{pin.length - 4}
-                </span>
-              )}
-            </div>
-
-            {/* Numeric Keypad */}
-            <div className="grid grid-cols-3 gap-2" dir="ltr">
-              {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((d) => (
-                <button
-                  key={d}
-                  type="button"
-                  onClick={() => handleDigit(d)}
-                  className="font-mono-num min-h-[46px] rounded-2xl border border-rose-300/15 bg-white/10 text-lg font-bold text-white hover:bg-rose-500/25 active:scale-95 transition"
-                >
-                  {d}
-                </button>
-              ))}
-              <button
-                type="button"
-                onClick={() => {
-                  setPin('');
-                  setError(null);
-                }}
-                className="min-h-[46px] rounded-2xl border border-rose-300/15 bg-white/5 text-xs font-semibold text-rose-200 hover:bg-white/15 active:scale-95 transition"
-              >
-                مسح
-              </button>
-              <button
-                type="button"
-                onClick={() => handleDigit('0')}
-                className="font-mono-num min-h-[46px] rounded-2xl border border-rose-300/15 bg-white/10 text-lg font-bold text-white hover:bg-rose-500/25 active:scale-95 transition"
-              >
-                0
-              </button>
-              <button
-                type="button"
-                onClick={handleBackspace}
-                aria-label="حذف رقم"
-                className="flex min-h-[46px] items-center justify-center rounded-2xl border border-rose-300/15 bg-white/5 text-rose-200 hover:bg-white/15 active:scale-95 transition"
-              >
-                <Delete className="h-5 w-5" />
-              </button>
-            </div>
-
-            <button
-              type="button"
-              onClick={handlePinContinue}
-              className="mt-3 flex w-full min-h-[46px] items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-rose-600 to-rose-500 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-rose-900/50 hover:from-rose-500 hover:to-rose-400 active:scale-[0.98] transition"
-            >
-              <Lock className="h-4 w-4" />
-              <span>دخول (الرمز الافتراضي 0000)</span>
-            </button>
+        <div>
+          {/* PIN Dots */}
+          <div className="mb-3 flex items-center justify-center gap-3">
+            {[0, 1, 2, 3].map((i) => (
+              <div
+                key={i}
+                className={`h-3.5 w-3.5 rounded-full border transition-all ${
+                  pin.length > i
+                    ? 'scale-110 border-rose-300 bg-rose-400 shadow-[0_0_12px_rgba(251,113,133,0.8)]'
+                    : 'border-rose-300/40 bg-white/5'
+                }`}
+              />
+            ))}
+            {pin.length > 4 && (
+              <span className="font-mono-num text-xs text-rose-200">
+                +{pin.length - 4}
+              </span>
+            )}
           </div>
-        ) : (
-          <div className="space-y-3">
-            <p className="text-center text-sm font-bold text-rose-100">
-              اختر صفتك في هذه الجلسة للمزامنة:
-            </p>
-            <div className="grid grid-cols-2 gap-3">
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => handleSelectRole('male')}
-                className="flex flex-col items-center justify-center gap-2 min-h-[112px] rounded-2xl border border-sky-400/35 bg-sky-950/45 p-4 text-white hover:bg-sky-800/45 active:scale-95 transition disabled:opacity-50"
-              >
-                <span className="text-3xl">👨🏻</span>
-                <span className="text-base font-extrabold">ذكر</span>
-                <span className="text-[11px] text-sky-200/80">الحبيب</span>
-              </button>
 
+          {/* Numeric Keypad */}
+          <div className="grid grid-cols-3 gap-2" dir="ltr">
+            {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((d) => (
               <button
+                key={d}
                 type="button"
                 disabled={busy}
-                onClick={() => handleSelectRole('female')}
-                className="flex flex-col items-center justify-center gap-2 min-h-[112px] rounded-2xl border border-rose-400/40 bg-rose-900/45 p-4 text-white hover:bg-rose-700/50 active:scale-95 transition disabled:opacity-50"
+                onClick={() => handleDigit(d)}
+                className="font-mono-num min-h-[46px] rounded-2xl border border-rose-300/15 bg-white/10 text-lg font-bold text-white hover:bg-rose-500/25 active:scale-95 transition disabled:opacity-50"
               >
-                <span className="text-3xl">👩🏻</span>
-                <span className="text-base font-extrabold">أنثى</span>
-                <span className="text-[11px] text-rose-200/80">الحبيبة</span>
+                {d}
               </button>
-            </div>
+            ))}
             <button
               type="button"
               disabled={busy}
-              onClick={() => setStep('pin')}
-              className="w-full min-h-[40px] rounded-xl text-xs font-semibold text-rose-200/80 hover:text-white"
+              onClick={() => {
+                setPin('');
+                setError(null);
+              }}
+              className="min-h-[46px] rounded-2xl border border-rose-300/15 bg-white/5 text-xs font-semibold text-rose-200 hover:bg-white/15 active:scale-95 transition disabled:opacity-50"
             >
-              {busy ? 'جاري التحقق والتشفير...' : 'العودة لإدخال الرمز'}
+              مسح
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => handleDigit('0')}
+              className="font-mono-num min-h-[46px] rounded-2xl border border-rose-300/15 bg-white/10 text-lg font-bold text-white hover:bg-rose-500/25 active:scale-95 transition disabled:opacity-50"
+            >
+              0
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={handleBackspace}
+              aria-label="حذف رقم"
+              className="flex min-h-[46px] items-center justify-center rounded-2xl border border-rose-300/15 bg-white/5 text-rose-200 hover:bg-white/15 active:scale-95 transition disabled:opacity-50"
+            >
+              <Delete className="h-5 w-5" />
             </button>
           </div>
-        )}
+
+          <button
+            type="button"
+            disabled={busy}
+            onClick={handleLogin}
+            className="mt-3 flex w-full min-h-[46px] items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-rose-600 to-rose-500 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-rose-900/50 hover:from-rose-500 hover:to-rose-400 active:scale-[0.98] transition disabled:opacity-60"
+          >
+            <Lock className="h-4 w-4" />
+            <span>
+              {busy
+                ? 'جاري التحقق والدخول...'
+                : 'دخول (الزوج 0000 • الزوجة 1111)'}
+            </span>
+          </button>
+        </div>
       </motion.div>
     </div>
   );

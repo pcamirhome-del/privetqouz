@@ -2,6 +2,7 @@ import {getAnalytics, isSupported as isAnalyticsSupported} from 'firebase/analyt
 import {initializeApp} from 'firebase/app';
 import {
   type Database,
+  get as dbGet,
   getDatabase,
   onValue,
   ref as dbRef,
@@ -147,38 +148,167 @@ export function sanitizeRoomId(raw: string): string {
   return cleaned.length >= 3 ? cleaned.slice(0, 64) : 'habibi-room';
 }
 
+export const DEFAULT_MALE_PASSCODE = '0000';
+export const DEFAULT_FEMALE_PASSCODE = '1111';
+const ROOM_AUTH_PEPPER_KEY = 'NABD_ROOM_AUTH_REGISTRY_KEY';
+
+interface RoomAuthRegistry {
+  malePasscode: string;
+  femalePasscode: string;
+  cipherKey: string;
+  updatedAt: number;
+}
+
+async function readRoomAuthRegistry(roomId: string): Promise<RoomAuthRegistry | null> {
+  if (!rtdb) return null;
+  try {
+    const snap = await withTimeout(
+      dbGet(dbRef(rtdb, `shared/${roomId}/auth`)),
+      4500,
+      'auth_timeout'
+    );
+    const val = snap.val() as {encryptedData?: string} | null;
+    if (!val?.encryptedData) return null;
+    return decryptPayload<RoomAuthRegistry>(
+      val.encryptedData,
+      roomId,
+      ROOM_AUTH_PEPPER_KEY
+    );
+  } catch {
+    return null;
+  }
+}
+
+async function writeRoomAuthRegistry(
+  roomId: string,
+  registry: RoomAuthRegistry
+): Promise<void> {
+  if (!rtdb) return;
+  try {
+    const encryptedData = encryptPayload(registry, roomId, ROOM_AUTH_PEPPER_KEY);
+    await dbSet(dbRef(rtdb, `shared/${roomId}/auth`), {
+      encryptedData,
+      updatedAt: registry.updatedAt,
+    });
+  } catch {
+    // non-fatal
+  }
+}
+
 export async function connectOrCreateRoom(
   rawRoomId: string,
-  passcode: string
+  enteredPin: string
 ): Promise<{
   roomId: string;
+  cipherKey: string;
+  role: PartnerRole;
   settings: EncryptedRoomSettings;
   isNewRoom: boolean;
 }> {
   const deviceUid = getDeviceUid();
   const roomId = sanitizeRoomId(rawRoomId);
+  const pin = enteredPin.trim();
   const roomPath = `rooms/${roomId}`;
   const roomRef = doc(db, 'rooms', roomId);
-  const joinCodeHash = computeJoinCodeHash(roomId, passcode);
 
-  const existingSnap = await getDoc(roomRef).catch((err) => {
-    handleFirestoreError(err, OperationType.GET, roomPath);
-  });
+  const authRegistry = await readRoomAuthRegistry(roomId);
+  let resolvedRole: PartnerRole | null = null;
+  const candidateCipherKeys: string[] = [];
 
+  if (authRegistry) {
+    if (pin === authRegistry.malePasscode) {
+      resolvedRole = 'male';
+    } else if (pin === authRegistry.femalePasscode) {
+      resolvedRole = 'female';
+    } else {
+      throw new Error('الرمز السري غير صحيح. أدخل رمز الزوج أو رمز الزوجة.');
+    }
+    if (authRegistry.cipherKey) {
+      candidateCipherKeys.push(authRegistry.cipherKey);
+    }
+  } else {
+    if (pin === DEFAULT_MALE_PASSCODE) {
+      resolvedRole = 'male';
+      candidateCipherKeys.push(DEFAULT_MALE_PASSCODE);
+    } else if (pin === DEFAULT_FEMALE_PASSCODE) {
+      resolvedRole = 'female';
+      candidateCipherKeys.push(DEFAULT_MALE_PASSCODE, DEFAULT_FEMALE_PASSCODE);
+    } else {
+      candidateCipherKeys.push(pin, DEFAULT_MALE_PASSCODE);
+    }
+  }
+
+  let existingSnap = null;
+  try {
+    existingSnap = await getDoc(roomRef);
+  } catch {
+    // Allow RTDB fallback below if Firestore get fails transiently
+  }
+
+  // Also check RTDB settings snapshot in case room was created/synced on RTDB
   if (existingSnap && existingSnap.exists()) {
     const data = existingSnap.data() as {
       encryptedSettings: string;
       joinCodeHash: string;
       memberUids: string[];
     };
-    const decrypted = decryptPayload<EncryptedRoomSettings>(
-      data.encryptedSettings,
-      roomId,
-      passcode
-    );
-    if (!decrypted || data.joinCodeHash !== joinCodeHash) {
-      throw new Error('الرمز السري غير صحيح لهذه الغرفة.');
+
+    let matchedCipherKey: string | null = null;
+    let decrypted: EncryptedRoomSettings | null = null;
+
+    for (const keyCandidate of Array.from(new Set(candidateCipherKeys))) {
+      const attempt = decryptPayload<EncryptedRoomSettings>(
+        data.encryptedSettings,
+        roomId,
+        keyCandidate
+      );
+      if (attempt && data.joinCodeHash === computeJoinCodeHash(roomId, keyCandidate)) {
+        matchedCipherKey = keyCandidate;
+        decrypted = attempt;
+        break;
+      }
     }
+
+    if (!decrypted || !matchedCipherKey) {
+      throw new Error(
+        'الرمز السري غير صحيح لهذه الغرفة. (الافتراضي: الزوج 0000، الزوجة 1111)'
+      );
+    }
+
+    const malePin = decrypted.malePasscode || DEFAULT_MALE_PASSCODE;
+    const femalePin = decrypted.femalePasscode || DEFAULT_FEMALE_PASSCODE;
+
+    if (!resolvedRole) {
+      if (pin === malePin) {
+        resolvedRole = 'male';
+      } else if (pin === femalePin) {
+        resolvedRole = 'female';
+      } else if (pin === decrypted.passcode) {
+        resolvedRole = 'male';
+      } else {
+        throw new Error(
+          'الرمز السري غير صحيح لهذه الغرفة. (الافتراضي: الزوج 0000، الزوجة 1111)'
+        );
+      }
+    } else if (
+      (resolvedRole === 'male' && pin !== malePin) ||
+      (resolvedRole === 'female' && pin !== femalePin)
+    ) {
+      // Handle case where PIN was changed inside Firestore before RTDB auth synced
+      if (pin === malePin) resolvedRole = 'male';
+      else if (pin === femalePin) resolvedRole = 'female';
+      else if (pin !== decrypted.passcode) {
+        throw new Error('الرمز السري غير صحيح لهذه الغرفة.');
+      }
+    }
+
+    const mergedSettings: EncryptedRoomSettings = {
+      ...DEFAULT_ROOM_SETTINGS,
+      ...decrypted,
+      passcode: matchedCipherKey,
+      malePasscode: malePin,
+      femalePasscode: femalePin,
+    };
 
     if (!data.memberUids?.includes(deviceUid)) {
       try {
@@ -186,28 +316,43 @@ export async function connectOrCreateRoom(
           memberUids: arrayUnion(deviceUid),
           updatedAt: serverTimestamp(),
         });
-      } catch (err) {
-        const code = (err as {code?: string})?.code || '';
-        if (code === 'permission-denied') {
-          throw new Error('الغرفة مكتملة بجهازين بالفعل.');
-        }
-        handleFirestoreError(err, OperationType.UPDATE, roomPath);
+      } catch {
+        // If room already has 2 UIDs (e.g., partner opened another browser), RTDB dual-sync still keeps both partners live!
       }
     }
 
+    await writeRoomAuthRegistry(roomId, {
+      malePasscode: malePin,
+      femalePasscode: femalePin,
+      cipherKey: matchedCipherKey,
+      updatedAt: Date.now(),
+    });
+
     return {
       roomId,
-      settings: {...DEFAULT_ROOM_SETTINGS, ...decrypted},
+      cipherKey: matchedCipherKey,
+      role: resolvedRole,
+      settings: mergedSettings,
       isNewRoom: false,
     };
   }
 
-  // Room does not exist yet -> create it
+  // Room does not exist yet -> only default Male (0000) or Female (1111) creates it
+  if (pin !== DEFAULT_MALE_PASSCODE && pin !== DEFAULT_FEMALE_PASSCODE) {
+    throw new Error('الرمز السري غير صحيح. رمز الزوج 0000 ورمز الزوجة 1111.');
+  }
+
+  const role: PartnerRole = pin === DEFAULT_FEMALE_PASSCODE ? 'female' : 'male';
+  const cipherKey = DEFAULT_MALE_PASSCODE;
   const initialSettings: EncryptedRoomSettings = {
     ...DEFAULT_ROOM_SETTINGS,
-    passcode,
+    passcode: cipherKey,
+    malePasscode: DEFAULT_MALE_PASSCODE,
+    femalePasscode: DEFAULT_FEMALE_PASSCODE,
   };
-  const encryptedSettings = encryptPayload(initialSettings, roomId, passcode);
+  const encryptedSettings = encryptPayload(initialSettings, roomId, cipherKey);
+  const joinCodeHash = computeJoinCodeHash(roomId, cipherKey);
+
   try {
     await setDoc(roomRef, {
       ownerUid: deviceUid,
@@ -217,10 +362,27 @@ export async function connectOrCreateRoom(
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
-    return {roomId, settings: initialSettings, isNewRoom: true};
   } catch (createErr) {
-    handleFirestoreError(createErr, OperationType.CREATE, roomPath);
+    if (!rtdb) {
+      handleFirestoreError(createErr, OperationType.CREATE, roomPath);
+    }
   }
+
+  await writeRoomAuthRegistry(roomId, {
+    malePasscode: DEFAULT_MALE_PASSCODE,
+    femalePasscode: DEFAULT_FEMALE_PASSCODE,
+    cipherKey,
+    updatedAt: Date.now(),
+  });
+
+  if (rtdb) {
+    await dbSet(dbRef(rtdb, `shared/${roomId}/settings`), {
+      encryptedData: encryptedSettings,
+      updatedAt: Date.now(),
+    }).catch(() => {});
+  }
+
+  return {roomId, cipherKey, role, settings: initialSettings, isNewRoom: true};
 }
 
 export function subscribeRoomSettings(
@@ -229,30 +391,65 @@ export function subscribeRoomSettings(
   onData: (settings: EncryptedRoomSettings) => void,
   onError: (err: Error) => void
 ) {
-  const path = `rooms/${roomId}`;
-  return onSnapshot(
+  let latestTs = 0;
+
+  const emitIfFresh = (decoded: EncryptedRoomSettings | null, ts: number) => {
+    if (!decoded) return;
+    if (ts >= latestTs) {
+      latestTs = ts;
+      onData({...DEFAULT_ROOM_SETTINGS, ...decoded});
+    }
+  };
+
+  const unsubFirestore = onSnapshot(
     doc(db, 'rooms', roomId),
     (snap) => {
       if (!snap.exists()) return;
-      const data = snap.data() as {encryptedSettings?: string};
+      const data = snap.data() as {
+        encryptedSettings?: string;
+        updatedAt?: {toMillis?: () => number};
+      };
       if (!data?.encryptedSettings) return;
       const decoded = decryptPayload<EncryptedRoomSettings>(
         data.encryptedSettings,
         roomId,
         passcode
       );
-      if (decoded) {
-        onData({...DEFAULT_ROOM_SETTINGS, ...decoded});
-      }
+      const ts = data.updatedAt?.toMillis?.() ?? Date.now();
+      emitIfFresh(decoded, ts);
     },
     (error) => {
-      try {
-        handleFirestoreError(error, OperationType.GET, path);
-      } catch (e) {
-        onError(e instanceof Error ? e : new Error(String(e)));
+      if (!rtdb) {
+        onError(error instanceof Error ? error : new Error(String(error)));
       }
     }
   );
+
+  let unsubRtdb: (() => void) | null = null;
+  if (rtdb) {
+    unsubRtdb = onValue(
+      dbRef(rtdb, `shared/${roomId}/settings`),
+      (snapshot) => {
+        const val = snapshot.val() as {
+          encryptedData?: string;
+          updatedAt?: number;
+        } | null;
+        if (!val?.encryptedData) return;
+        const decoded = decryptPayload<EncryptedRoomSettings>(
+          val.encryptedData,
+          roomId,
+          passcode
+        );
+        emitIfFresh(decoded, val.updatedAt || Date.now());
+      },
+      () => {}
+    );
+  }
+
+  return () => {
+    unsubFirestore();
+    if (unsubRtdb) unsubRtdb();
+  };
 }
 
 export async function saveRoomSettings(
@@ -262,42 +459,69 @@ export async function saveRoomSettings(
 ): Promise<void> {
   const path = `rooms/${roomId}`;
   const targetPin = nextSettings.passcode || activePasscode;
-  const encryptedSettings = encryptPayload(nextSettings, roomId, targetPin);
+  const now = Date.now();
+  const normalizedSettings: EncryptedRoomSettings = {
+    ...nextSettings,
+    passcode: targetPin,
+    malePasscode: nextSettings.malePasscode || DEFAULT_MALE_PASSCODE,
+    femalePasscode: nextSettings.femalePasscode || DEFAULT_FEMALE_PASSCODE,
+  };
+  const encryptedSettings = encryptPayload(normalizedSettings, roomId, targetPin);
   const joinCodeHash = computeJoinCodeHash(roomId, targetPin);
+
+  let rtdbSaved = false;
+  if (rtdb) {
+    try {
+      const cardsCipher = encryptPayload(
+        normalizedSettings.mysteryCards || DEFAULT_ROOM_SETTINGS.mysteryCards,
+        roomId,
+        targetPin
+      );
+      const anniversaryCipher = encryptPayload(
+        {
+          anniversaryDate: normalizedSettings.anniversaryDate || '',
+          upcomingEventDate: normalizedSettings.upcomingEventDate || '',
+          upcomingEventTitle: normalizedSettings.upcomingEventTitle || '',
+        },
+        roomId,
+        targetPin
+      );
+      await Promise.all([
+        dbSet(dbRef(rtdb, `shared/${roomId}/settings`), {
+          encryptedData: encryptedSettings,
+          updatedAt: now,
+        }),
+        writeRoomAuthRegistry(roomId, {
+          malePasscode: normalizedSettings.malePasscode!,
+          femalePasscode: normalizedSettings.femalePasscode!,
+          cipherKey: targetPin,
+          updatedAt: now,
+        }),
+        dbSet(dbRef(rtdb, `shared/${roomId}/cardsPool`), {
+          encryptedData: cardsCipher,
+          updatedAt: now,
+        }),
+        dbSet(dbRef(rtdb, `shared/${roomId}/anniversary`), {
+          encryptedData: anniversaryCipher,
+          updatedAt: now,
+        }),
+      ]);
+      rtdbSaved = true;
+    } catch {
+      // Continue to Firestore
+    }
+  }
+
   try {
     await updateDoc(doc(db, 'rooms', roomId), {
       encryptedSettings,
       joinCodeHash,
       updatedAt: serverTimestamp(),
     });
-    if (rtdb) {
-      const cardsCipher = encryptPayload(
-        nextSettings.mysteryCards || DEFAULT_ROOM_SETTINGS.mysteryCards,
-        roomId,
-        targetPin
-      );
-      const anniversaryCipher = encryptPayload(
-        {
-          anniversaryDate: nextSettings.anniversaryDate || '',
-          upcomingEventDate: nextSettings.upcomingEventDate || '',
-          upcomingEventTitle: nextSettings.upcomingEventTitle || '',
-        },
-        roomId,
-        targetPin
-      );
-      await Promise.allSettled([
-        dbSet(dbRef(rtdb, `shared/${roomId}/cardsPool`), {
-          encryptedData: cardsCipher,
-          updatedAt: Date.now(),
-        }),
-        dbSet(dbRef(rtdb, `shared/${roomId}/anniversary`), {
-          encryptedData: anniversaryCipher,
-          updatedAt: Date.now(),
-        }),
-      ]);
-    }
   } catch (error) {
-    handleFirestoreError(error, OperationType.UPDATE, path);
+    if (!rtdbSaved) {
+      handleFirestoreError(error, OperationType.UPDATE, path);
+    }
   }
 }
 
@@ -310,6 +534,20 @@ export async function updatePartnerPresence(
   const deviceUid = getDeviceUid();
   const path = `rooms/${roomId}/presence/${role}`;
   const encryptedData = encryptPayload(presence, roomId, passcode);
+  let rtdbSaved = false;
+
+  if (rtdb) {
+    try {
+      await dbSet(dbRef(rtdb, `shared/${roomId}/presence/${role}`), {
+        encryptedData,
+        updatedAt: presence.lastSeen || Date.now(),
+      });
+      rtdbSaved = true;
+    } catch {
+      // fallback to Firestore
+    }
+  }
+
   try {
     await setDoc(doc(db, 'rooms', roomId, 'presence', role), {
       uid: deviceUid,
@@ -318,7 +556,9 @@ export async function updatePartnerPresence(
       updatedAt: serverTimestamp(),
     });
   } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, path);
+    if (!rtdbSaved) {
+      handleFirestoreError(error, OperationType.WRITE, path);
+    }
   }
 }
 
@@ -328,30 +568,55 @@ export function subscribePartnerPresence(
   role: PartnerRole,
   onData: (data: PartnerPresenceData | null) => void
 ) {
-  const path = `rooms/${roomId}/presence/${role}`;
-  return onSnapshot(
+  let latestTs = 0;
+
+  const emitIfFresh = (decoded: PartnerPresenceData | null) => {
+    if (!decoded) return;
+    const ts = Math.max(decoded.lastSeen || 0, decoded.lastPingAt || 0);
+    if (ts >= latestTs) {
+      latestTs = ts;
+      onData(decoded);
+    }
+  };
+
+  const unsubFirestore = onSnapshot(
     doc(db, 'rooms', roomId, 'presence', role),
     (snap) => {
-      if (!snap.exists()) {
-        onData(null);
-        return;
-      }
+      if (!snap.exists()) return;
       const raw = snap.data() as {encryptedData?: string};
-      if (!raw?.encryptedData) {
-        onData(null);
-        return;
-      }
+      if (!raw?.encryptedData) return;
       const decoded = decryptPayload<PartnerPresenceData>(
         raw.encryptedData,
         roomId,
         passcode
       );
-      onData(decoded);
+      emitIfFresh(decoded);
     },
-    (error) => {
-      handleFirestoreError(error, OperationType.GET, path);
-    }
+    () => {}
   );
+
+  let unsubRtdb: (() => void) | null = null;
+  if (rtdb) {
+    unsubRtdb = onValue(
+      dbRef(rtdb, `shared/${roomId}/presence/${role}`),
+      (snapshot) => {
+        const val = snapshot.val() as {encryptedData?: string} | null;
+        if (!val?.encryptedData) return;
+        const decoded = decryptPayload<PartnerPresenceData>(
+          val.encryptedData,
+          roomId,
+          passcode
+        );
+        emitIfFresh(decoded);
+      },
+      () => {}
+    );
+  }
+
+  return () => {
+    unsubFirestore();
+    if (unsubRtdb) unsubRtdb();
+  };
 }
 
 export type LiveStateKey = 'wheel' | 'quiz' | 'photos' | 'reaction' | 'background';
@@ -365,6 +630,24 @@ export async function writeLiveState<T>(
   const deviceUid = getDeviceUid();
   const path = `rooms/${roomId}/liveState/${stateId}`;
   const encryptedData = encryptPayload(payload, roomId, passcode);
+  const ts =
+    (payload as {updatedAt?: number; timestamp?: number})?.updatedAt ??
+    (payload as {timestamp?: number})?.timestamp ??
+    Date.now();
+  let rtdbSaved = false;
+
+  if (rtdb) {
+    try {
+      await dbSet(dbRef(rtdb, `shared/${roomId}/live/${stateId}`), {
+        encryptedData,
+        updatedAt: ts,
+      });
+      rtdbSaved = true;
+    } catch {
+      // continue to Firestore
+    }
+  }
+
   try {
     await setDoc(doc(db, 'rooms', roomId, 'liveState', stateId), {
       updatedBy: deviceUid,
@@ -372,7 +655,9 @@ export async function writeLiveState<T>(
       updatedAt: serverTimestamp(),
     });
   } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, path);
+    if (!rtdbSaved) {
+      handleFirestoreError(error, OperationType.WRITE, path);
+    }
   }
 }
 
@@ -382,26 +667,56 @@ export function subscribeLiveState<T>(
   stateId: LiveStateKey,
   onData: (data: T | null) => void
 ) {
-  const path = `rooms/${roomId}/liveState/${stateId}`;
-  return onSnapshot(
+  let latestTs = 0;
+
+  const emitIfFresh = (decoded: T | null, fallbackTs: number) => {
+    if (!decoded) return;
+    const payloadTs =
+      (decoded as {updatedAt?: number; timestamp?: number})?.updatedAt ??
+      (decoded as {timestamp?: number})?.timestamp ??
+      fallbackTs;
+    if (payloadTs >= latestTs) {
+      latestTs = payloadTs;
+      onData(decoded);
+    }
+  };
+
+  const unsubFirestore = onSnapshot(
     doc(db, 'rooms', roomId, 'liveState', stateId),
     (snap) => {
-      if (!snap.exists()) {
-        onData(null);
-        return;
-      }
-      const raw = snap.data() as {encryptedData?: string};
-      if (!raw?.encryptedData) {
-        onData(null);
-        return;
-      }
+      if (!snap.exists()) return;
+      const raw = snap.data() as {
+        encryptedData?: string;
+        updatedAt?: {toMillis?: () => number};
+      };
+      if (!raw?.encryptedData) return;
       const decoded = decryptPayload<T>(raw.encryptedData, roomId, passcode);
-      onData(decoded);
+      emitIfFresh(decoded, raw.updatedAt?.toMillis?.() ?? Date.now());
     },
-    (error) => {
-      handleFirestoreError(error, OperationType.GET, path);
-    }
+    () => {}
   );
+
+  let unsubRtdb: (() => void) | null = null;
+  if (rtdb) {
+    unsubRtdb = onValue(
+      dbRef(rtdb, `shared/${roomId}/live/${stateId}`),
+      (snapshot) => {
+        const val = snapshot.val() as {
+          encryptedData?: string;
+          updatedAt?: number;
+        } | null;
+        if (!val?.encryptedData) return;
+        const decoded = decryptPayload<T>(val.encryptedData, roomId, passcode);
+        emitIfFresh(decoded, val.updatedAt || Date.now());
+      },
+      () => {}
+    );
+  }
+
+  return () => {
+    unsubFirestore();
+    if (unsubRtdb) unsubRtdb();
+  };
 }
 
 export interface SyncedBackgroundPayload {
@@ -614,27 +929,29 @@ export async function uploadEncryptedPhoto(
     }
   }
 
+  const nextIds = Array.from(
+    new Set([...(currentPhotosState?.photoIds || []), photo.id])
+  );
+
   try {
     await setDoc(doc(db, 'rooms', roomId, 'photos', photo.id), {
       uploaderUid: deviceUid,
       encryptedData,
       createdAt: serverTimestamp(),
     });
-    const nextIds = Array.from(
-      new Set([...(currentPhotosState?.photoIds || []), photo.id])
-    );
-    await writeLiveState<PhotosLiveState>(roomId, passcode, 'photos', {
-      photoIds: nextIds,
-      activePhotoId: currentPhotosState?.activePhotoId || null,
-      isShuffling: false,
-      rerollRequest: currentPhotosState?.rerollRequest || null,
-      updatedAt: Date.now(),
-    });
   } catch (error) {
     if (!rtdbSaved) {
       handleFirestoreError(error, OperationType.WRITE, photoPath);
     }
   }
+
+  await writeLiveState<PhotosLiveState>(roomId, passcode, 'photos', {
+    photoIds: nextIds,
+    activePhotoId: currentPhotosState?.activePhotoId || null,
+    isShuffling: false,
+    rerollRequest: currentPhotosState?.rerollRequest || null,
+    updatedAt: Date.now(),
+  }).catch(() => {});
 }
 
 export function subscribeSharedGallery(

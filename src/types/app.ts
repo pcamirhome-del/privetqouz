@@ -36,6 +36,8 @@ export interface MediaBackgroundConfig {
 
 export interface EncryptedRoomSettings {
   passcode: string;
+  malePasscode?: string;
+  femalePasscode?: string;
   bannerText: string;
   overlayOpacity: number;
   backgroundType: 'default' | 'image' | 'video' | 'gif';
@@ -48,6 +50,9 @@ export interface EncryptedRoomSettings {
   anniversaryDate?: string;
   upcomingEventDate?: string;
   upcomingEventTitle?: string;
+  periodicReminderEnabled?: boolean;
+  periodicReminderMinutes?: number;
+  periodicReminderMessage?: string;
   askedQuestionIds: string[];
   customQuestions: QuizQuestion[];
   allowZoom: boolean;
@@ -113,6 +118,8 @@ export interface SharedPhotoItem {
   caption: string;
   uploadedBy: PartnerRole;
   createdAt: number;
+  contentHash?: string;
+  perceptualHash?: string;
 }
 
 export interface PhotosLiveState {
@@ -184,6 +191,8 @@ export const DEFAULT_MYSTERY_CARDS: MysteryCardItem[] = [
 
 export const DEFAULT_ROOM_SETTINGS: EncryptedRoomSettings = {
   passcode: '0000',
+  malePasscode: '0000',
+  femalePasscode: '1111',
   bannerText: 'أنتِ أجمل أقداري... كل لحظة تجمعنا نبض وحياة ❤️💋',
   overlayOpacity: 0.62,
   backgroundType: 'default',
@@ -195,6 +204,9 @@ export const DEFAULT_ROOM_SETTINGS: EncryptedRoomSettings = {
   anniversaryDate: '',
   upcomingEventDate: '',
   upcomingEventTitle: '',
+  periodicReminderEnabled: true,
+  periodicReminderMinutes: 2,
+  periodicReminderMessage: 'تذكير لطيف: ابتسما لبعضكما الآن وأرسلا قبلة ❤️💋',
   askedQuestionIds: [],
   customQuestions: [],
   allowZoom: false,

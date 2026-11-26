@@ -1,5 +1,7 @@
 import React, {useCallback, useEffect, useRef, useState} from 'react';
+import {AnimatePresence, motion} from 'motion/react';
 import {
+  BellRing,
   Disc3,
   HeartHandshake,
   HelpCircle,
@@ -56,6 +58,7 @@ import {ErrorBoundary} from './components/ErrorBoundary';
 import {LoginScreen} from './components/LoginScreen';
 import {RomanticFloatingLayer} from './components/RomanticFloatingLayer';
 import {
+  ClappingHandsOverlay,
   EntranceCharacterOverlay,
   ReactionPopupOverlay,
 } from './components/AnimatedCharacter';
@@ -96,6 +99,8 @@ function MainAppContent() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [partnerModalOpen, setPartnerModalOpen] = useState(false);
   const [muted, setMuted] = useState<boolean>(() => soundEngine.muted);
+  const [clapLabel, setClapLabel] = useState<string | null>(null);
+  const [periodicReminderVisible, setPeriodicReminderVisible] = useState(false);
   const [localBgUrl, setLocalBgUrl] = useState<string>('');
   const [syncedBgPayload, setSyncedBgPayload] =
     useState<SyncedBackgroundPayload | null>(null);
@@ -106,9 +111,20 @@ function MainAppContent() {
   } | null>(null);
 
   const lastReactionIdRef = useRef<string | null>(null);
+  const lastWinWheelIdRef = useRef<string | null>(null);
+  const lastWinQuizIdRef = useRef<string | null>(null);
+  const clapTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fetchedPhotoIdsRef = useRef<Set<string>>(new Set());
   const rtdbPhotoIdsRef = useRef<Set<string>>(new Set());
   const isOnline = useOnlineStatus();
+
+  const triggerClap = useCallback((label?: string) => {
+    if (clapTimeoutRef.current) clearTimeout(clapTimeoutRef.current);
+    setClapLabel(label || 'مبروك الفوز! 👏🎉');
+    clapTimeoutRef.current = setTimeout(() => {
+      setClapLabel(null);
+    }, 2800);
+  }, []);
 
   // Boot connection check
   useEffect(() => {
@@ -223,9 +239,14 @@ function MainAppContent() {
         if (Date.now() - evt.timestamp > 8000) return;
         lastReactionIdRef.current = evt.id;
         setActiveReaction(evt);
-        if (evt.type === 'happy') soundEngine.playWin();
-        else if (evt.type === 'sad') soundEngine.playSad();
-        else soundEngine.playKissPing();
+        if (evt.type === 'happy') {
+          soundEngine.playWin();
+          triggerClap('إجابة موفقة! 👏✨');
+        } else if (evt.type === 'sad') {
+          soundEngine.playSad();
+        } else {
+          soundEngine.playKissPing();
+        }
         setTimeout(() => {
           setActiveReaction((curr) => (curr?.id === evt.id ? null : curr));
         }, 2800);
@@ -262,11 +283,82 @@ function MainAppContent() {
     };
   }, [session]);
 
-  // Fetch & decrypt photos whenever photosState.photoIds updates
+  // Trigger center-screen clapping hands on game wins (Quiz round win / Spin Wheel accepted)
+  useEffect(() => {
+    if (!session || !wheelState) return;
+    if (
+      wheelState.status === 'accepted' &&
+      wheelState.spinId !== lastWinWheelIdRef.current &&
+      Date.now() - (wheelState.timestamp || 0) < 12000
+    ) {
+      lastWinWheelIdRef.current = wheelState.spinId;
+      triggerClap(`مبروك الفوز: ${wheelState.targetLabel} 👏`);
+    }
+  }, [session, wheelState, triggerClap]);
+
+  useEffect(() => {
+    if (!session || !quizState) return;
+    if (
+      quizState.status === 'finished' &&
+      quizState.roundId !== lastWinQuizIdRef.current &&
+      Date.now() - (quizState.updatedAt || 0) < 15000
+    ) {
+      lastWinQuizIdRef.current = quizState.roundId;
+      if (quizState.winnerRole === session.role) {
+        triggerClap('مبروك الفوز بالمسابقة! 🏆👏');
+      } else if (quizState.winnerRole === 'tie') {
+        triggerClap('تعادل رائع! 👏❤️');
+      }
+    }
+  }, [session, quizState, triggerClap]);
+
+  // Configurable periodic playtime reminder message (default every 2 minutes)
+  useEffect(() => {
+    if (!session) {
+      setPeriodicReminderVisible(false);
+      return;
+    }
+    const enabled = settings.periodicReminderEnabled ?? true;
+    const msg = (
+      settings.periodicReminderMessage ??
+      DEFAULT_ROOM_SETTINGS.periodicReminderMessage ??
+      ''
+    ).trim();
+    const minutes = Math.max(1, Number(settings.periodicReminderMinutes ?? 2));
+
+    if (!enabled || !msg) {
+      setPeriodicReminderVisible(false);
+      return;
+    }
+
+    let autoHideTimer: ReturnType<typeof setTimeout> | null = null;
+    const interval = setInterval(() => {
+      setPeriodicReminderVisible(true);
+      soundEngine.playKissPing();
+      if (autoHideTimer) clearTimeout(autoHideTimer);
+      autoHideTimer = setTimeout(() => {
+        setPeriodicReminderVisible(false);
+      }, 14000);
+    }, minutes * 60 * 1000);
+
+    return () => {
+      clearInterval(interval);
+      if (autoHideTimer) clearTimeout(autoHideTimer);
+    };
+  }, [
+    session,
+    settings.periodicReminderEnabled,
+    settings.periodicReminderMinutes,
+    settings.periodicReminderMessage,
+  ]);
+
+  // Fetch & decrypt photos whenever photosState.photoIds updates without wiping RTDB gallery items
   useEffect(() => {
     if (!session || !photosState?.photoIds) return;
     const ids = photosState.photoIds;
-    setPhotos((prev) => prev.filter((p) => ids.includes(p.id)));
+    setPhotos((prev) =>
+      prev.filter((p) => ids.includes(p.id) || rtdbPhotoIdsRef.current.has(p.id))
+    );
 
     const missing = ids.filter((id) => !fetchedPhotoIdsRef.current.has(id));
     if (missing.length === 0) return;
@@ -287,15 +379,15 @@ function MainAppContent() {
     });
   }, [session, photosState?.photoIds]);
 
-  const handleAuthenticateRoom = async (
-    rawRoomId: string,
-    pin: string,
-    role: PartnerRole
-  ) => {
+  const handleAuthenticateRoom = async (rawRoomId: string, pin: string) => {
     const result = await connectOrCreateRoom(rawRoomId, pin);
     localStorage.setItem(STORAGE_ROOM_KEY, result.roomId);
     setSettings(result.settings);
-    setSession({roomId: result.roomId, pin, role});
+    setSession({
+      roomId: result.roomId,
+      pin: result.cipherKey,
+      role: result.role,
+    });
     setShowEntrance(true);
     soundEngine.playKissPing();
   };
@@ -386,7 +478,11 @@ function MainAppContent() {
     await saveRoomSettings(session.roomId, session.pin, next);
   };
 
-  const handleUploadPhoto = async (dataUrl: string, caption: string) => {
+  const handleUploadPhoto = async (
+    dataUrl: string,
+    caption: string,
+    hashes?: {contentHash: string; perceptualHash: string}
+  ) => {
     if (!session) return;
     const item: SharedPhotoItem = {
       id: `ph_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
@@ -394,8 +490,11 @@ function MainAppContent() {
       caption,
       uploadedBy: session.role,
       createdAt: Date.now(),
+      contentHash: hashes?.contentHash,
+      perceptualHash: hashes?.perceptualHash,
     };
     fetchedPhotoIdsRef.current.add(item.id);
+    rtdbPhotoIdsRef.current.add(item.id);
     setPhotos((prev) => [...prev, item]);
     await uploadEncryptedPhoto(session.roomId, session.pin, item, photosState);
   };
@@ -684,13 +783,46 @@ function MainAppContent() {
         </div>
       )}
 
-      {/* Login Entrance Walking & Kiss-Blowing Character */}
-      {showEntrance && (
-        <EntranceCharacterOverlay
-          role={session.role}
-          onDismiss={() => setShowEntrance(false)}
-        />
-      )}
+      {/* Login Entrance Walking & Kiss-Blowing Character (visible for 10s on open) */}
+      <AnimatePresence>
+        {showEntrance && (
+          <EntranceCharacterOverlay
+            role={session.role}
+            onDismiss={() => setShowEntrance(false)}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Center-Screen Clapping Hands on Win */}
+      <ClappingHandsOverlay active={Boolean(clapLabel)} label={clapLabel || undefined} />
+
+      {/* Periodic Configurable Playtime Reminder Message */}
+      <AnimatePresence>
+        {periodicReminderVisible && (
+          <motion.div
+            initial={{opacity: 0, y: -16, scale: 0.95}}
+            animate={{opacity: 1, y: 0, scale: 1}}
+            exit={{opacity: 0, y: -16, scale: 0.95}}
+            transition={{duration: 0.25}}
+            className="fixed top-14 inset-x-0 z-50 mx-auto flex w-[92%] max-w-md items-center justify-between gap-2.5 rounded-2xl border border-amber-300/45 bg-[#240614]/95 px-3.5 py-2.5 text-white shadow-2xl backdrop-blur-xl"
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <BellRing className="h-4 w-4 shrink-0 text-amber-300 animate-bounce" />
+              <p className="text-xs sm:text-sm font-extrabold text-amber-100 leading-snug break-words">
+                {settings.periodicReminderMessage ||
+                  DEFAULT_ROOM_SETTINGS.periodicReminderMessage}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setPeriodicReminderVisible(false)}
+              className="shrink-0 rounded-xl bg-rose-600 px-2.5 py-1 text-[11px] font-extrabold text-white hover:bg-rose-500 transition"
+            >
+              إغلاق
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Synced Transparent Reaction Popup Overlay (Happy / Sad / Kiss) */}
       <ReactionPopupOverlay
@@ -707,6 +839,7 @@ function MainAppContent() {
           setSettingsOpen(false);
         }}
         currentPin={session.pin}
+        role={session.role}
         settings={settings}
         photos={photos}
         onSaveSettings={handleSaveSettings}

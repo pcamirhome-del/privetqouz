@@ -1,5 +1,7 @@
 import React, {useState} from 'react';
 import {
+  AlertCircle,
+  BellRing,
   CalendarHeart,
   Download,
   Eye,
@@ -17,14 +19,20 @@ import {
 } from 'lucide-react';
 import {
   DEFAULT_MYSTERY_CARDS,
+  DEFAULT_ROOM_SETTINGS,
   EncryptedRoomSettings,
   MediaBackgroundConfig,
   MysteryCardItem,
+  PartnerRole,
   QuizRewardButton,
   SharedPhotoItem,
   WheelSegment,
 } from '../types/app';
-import {compressImageFile} from '../services/mediaStore';
+import {
+  compressImageFile,
+  computeImageFingerprint,
+  isDuplicatePhoto,
+} from '../services/mediaStore';
 import {usePWAInstall} from '../hooks/usePWAInstall';
 
 type SettingsSection =
@@ -39,6 +47,7 @@ interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
   currentPin: string;
+  role: PartnerRole;
   settings: EncryptedRoomSettings;
   photos: SharedPhotoItem[];
   onSaveSettings: (next: EncryptedRoomSettings) => Promise<void>;
@@ -47,7 +56,11 @@ interface SettingsModalProps {
     type: MediaBackgroundConfig['type'],
     fileOrUrl?: File | string
   ) => Promise<void>;
-  onUploadPhoto: (dataUrl: string, caption: string) => Promise<void>;
+  onUploadPhoto: (
+    dataUrl: string,
+    caption: string,
+    hashes?: {contentHash: string; perceptualHash: string}
+  ) => Promise<void>;
   onDeletePhoto: (photoId: string) => Promise<void>;
   onSignOut: () => Promise<void>;
   onPreviewBackgroundControls?: (
@@ -74,10 +87,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
   onClose,
   currentPin,
+  role,
   settings,
   photos,
   onSaveSettings,
-  onChangePasscode,
+  onChangePasscode: _onChangePasscode,
   onUpdateBackground,
   onUploadPhoto,
   onDeletePhoto,
@@ -90,7 +104,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [section, setSection] = useState<SettingsSection>('general');
 
   // Editable drafts
-  const [newPin, setNewPin] = useState('');
+  const [malePinDraft, setMalePinDraft] = useState(settings.malePasscode || '0000');
+  const [femalePinDraft, setFemalePinDraft] = useState(
+    settings.femalePasscode || '1111'
+  );
   const [bannerText, setBannerText] = useState(settings.bannerText);
   const [overlayOpacity, setOverlayOpacity] = useState(settings.overlayOpacity);
   const [backgroundScale, setBackgroundScale] = useState<number>(
@@ -110,6 +127,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [upcomingEventTitle, setUpcomingEventTitle] = useState(
     settings.upcomingEventTitle || ''
   );
+  const [reminderEnabled, setReminderEnabled] = useState<boolean>(
+    settings.periodicReminderEnabled ?? true
+  );
+  const [reminderMinutes, setReminderMinutes] = useState<number>(
+    settings.periodicReminderMinutes ?? 2
+  );
+  const [reminderMessage, setReminderMessage] = useState<string>(
+    settings.periodicReminderMessage ||
+      DEFAULT_ROOM_SETTINGS.periodicReminderMessage ||
+      ''
+  );
   const [wheelSegments, setWheelSegments] = useState<WheelSegment[]>(settings.wheelSegments);
   const [quizRewards, setQuizRewards] = useState<QuizRewardButton[]>(settings.quizRewards);
   const [mysteryCards, setMysteryCards] = useState<MysteryCardItem[]>(
@@ -120,6 +148,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [photoCaption, setPhotoCaption] = useState('');
   const [bgDirectUrl, setBgDirectUrl] = useState('');
   const [bgDirectUrlType, setBgDirectUrlType] = useState<'image' | 'video'>('video');
+  const [duplicateAlert, setDuplicateAlert] = useState<string | null>(null);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -160,6 +189,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setPinAttempt('');
     setPinError(null);
     setStatusMsg(null);
+    setDuplicateAlert(null);
     setLivePreviewMode(false);
     onPreviewBackgroundControls?.(null);
     onClose();
@@ -167,9 +197,24 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const handleUnlock = (e: React.FormEvent) => {
     e.preventDefault();
-    if (pinAttempt.trim() === currentPin) {
+    const attempt = pinAttempt.trim();
+    const expectedRolePin =
+      role === 'female'
+        ? settings.femalePasscode || '1111'
+        : settings.malePasscode || '0000';
+    const malePin = settings.malePasscode || '0000';
+    const femalePin = settings.femalePasscode || '1111';
+
+    if (
+      attempt === expectedRolePin ||
+      attempt === malePin ||
+      attempt === femalePin ||
+      attempt === currentPin
+    ) {
       setUnlocked(true);
       setPinError(null);
+      setMalePinDraft(malePin);
+      setFemalePinDraft(femalePin);
       setBannerText(settings.bannerText);
       setOverlayOpacity(settings.overlayOpacity);
       setBackgroundScale(settings.backgroundScale ?? 1);
@@ -179,6 +224,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setAnniversaryDate(settings.anniversaryDate || '');
       setUpcomingEventDate(settings.upcomingEventDate || '');
       setUpcomingEventTitle(settings.upcomingEventTitle || '');
+      setReminderEnabled(settings.periodicReminderEnabled ?? true);
+      setReminderMinutes(settings.periodicReminderMinutes ?? 2);
+      setReminderMessage(
+        settings.periodicReminderMessage ||
+          DEFAULT_ROOM_SETTINGS.periodicReminderMessage ||
+          ''
+      );
       setWheelSegments(settings.wheelSegments);
       setQuizRewards(settings.quizRewards);
       setMysteryCards(
@@ -186,7 +238,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           ? settings.mysteryCards
           : DEFAULT_MYSTERY_CARDS
       );
-      setNewPin('');
     } else {
       setPinError('الرمز السري غير صحيح.');
     }
@@ -196,6 +247,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setBusy(true);
     setStatusMsg(null);
     try {
+      const mPin = malePinDraft.trim();
+      const fPin = femalePinDraft.trim();
+      if (mPin.length < 4 || !/^\d+$/.test(mPin)) {
+        throw new Error('يجب أن يتكون رمز دخول الزوج من 4 أرقام على الأقل.');
+      }
+      if (fPin.length < 4 || !/^\d+$/.test(fPin)) {
+        throw new Error('يجب أن يتكون رمز دخول الزوجة من 4 أرقام على الأقل.');
+      }
+      if (mPin === fPin) {
+        throw new Error('يجب أن يكون رمز الزوج مختلفاً عن رمز الزوجة.');
+      }
+
       const cleanedWheel = wheelSegments
         .filter((w) => w.label.trim().length > 0)
         .map((w, i) => ({
@@ -213,8 +276,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         .filter((c) => c.text.trim().length > 0)
         .map((c) => ({...c, text: c.text.trim()}));
 
+      const clampedMinutes = Math.max(1, Math.min(120, Math.round(Number(reminderMinutes) || 2)));
+
       const nextSettings: EncryptedRoomSettings = {
         ...settings,
+        malePasscode: mPin,
+        femalePasscode: fPin,
         bannerText: bannerText.trim() || settings.bannerText,
         overlayOpacity,
         backgroundScale,
@@ -223,26 +290,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         anniversaryDate: anniversaryDate.trim(),
         upcomingEventDate: upcomingEventDate.trim(),
         upcomingEventTitle: upcomingEventTitle.trim(),
+        periodicReminderEnabled: reminderEnabled,
+        periodicReminderMinutes: clampedMinutes,
+        periodicReminderMessage:
+          reminderMessage.trim() ||
+          DEFAULT_ROOM_SETTINGS.periodicReminderMessage ||
+          '',
         wheelSegments: cleanedWheel.length > 0 ? cleanedWheel : settings.wheelSegments,
         quizRewards: cleanedRewards.length > 0 ? cleanedRewards : settings.quizRewards,
         mysteryCards:
           cleanedCards.length > 0 ? cleanedCards : DEFAULT_MYSTERY_CARDS,
       };
 
-      const trimmedPin = newPin.trim();
-      if (trimmedPin.length > 0) {
-        if (trimmedPin.length < 4 || !/^\d+$/.test(trimmedPin)) {
-          throw new Error('يجب أن يتكون الرمز الجديد من 4 أرقام على الأقل.');
-        }
-        await onChangePasscode(trimmedPin, nextSettings);
-        setNewPin('');
-        onPreviewBackgroundControls?.(null);
-        setStatusMsg('تم تحديث الرمز السري وإعادة تشفير الغرفة بالكامل.');
-      } else {
-        await onSaveSettings(nextSettings);
-        onPreviewBackgroundControls?.(null);
-        setStatusMsg('تم حفظ الإعدادات وتشفيرها بنجاح.');
-      }
+      await onSaveSettings(nextSettings);
+      onPreviewBackgroundControls?.(null);
+      setStatusMsg('تم حفظ الإعدادات ومزامنتها لحظياً مع الشريك.');
     } catch (err) {
       setStatusMsg(err instanceof Error ? err.message : 'تعذر حفظ الإعدادات.');
     } finally {
@@ -301,14 +363,47 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     const files = e.target.files;
     if (!files || files.length === 0) return;
     setBusy(true);
-    setStatusMsg('جاري ضغط الصور وتشفيرها للمعرض...');
+    setStatusMsg('جاري فحص وضغط الصور وتشفيرها للمعرض...');
     try {
+      const uploadedInBatch: SharedPhotoItem[] = [];
+      let uploadedCount = 0;
+      let duplicateFound = false;
+
       for (const file of Array.from(files)) {
         const compressed = await compressImageFile(file, 900, 350 * 1024, 0.75);
-        await onUploadPhoto(compressed, photoCaption.trim());
+        const hashes = await computeImageFingerprint(compressed);
+        const alreadyExists = await isDuplicatePhoto(compressed, hashes, [
+          ...photos,
+          ...uploadedInBatch,
+        ]);
+
+        if (alreadyExists) {
+          duplicateFound = true;
+          setDuplicateAlert('تم الرفع من قبل');
+          continue;
+        }
+
+        await onUploadPhoto(compressed, photoCaption.trim(), hashes);
+        uploadedInBatch.push({
+          id: `batch_${uploadedCount}`,
+          dataUrl: compressed,
+          caption: photoCaption.trim(),
+          uploadedBy: role,
+          createdAt: Date.now(),
+          contentHash: hashes.contentHash,
+          perceptualHash: hashes.perceptualHash,
+        });
+        uploadedCount++;
       }
+
       setPhotoCaption('');
-      setStatusMsg('تم ضغط وتشفير الصور ومزامنتها مع الشريك بنجاح.');
+      if (uploadedCount > 0 && !duplicateFound) {
+        setStatusMsg('تم ضغط وتشفير الصور ومزامنتها لحظياً مع الشريك بنجاح.');
+      } else if (uploadedCount > 0 && duplicateFound) {
+        setStatusMsg(`تم رفع ${uploadedCount} صورة وتجاهل الصور المرفوعة من قبل.`);
+      } else if (duplicateFound) {
+        setStatusMsg('تم الرفع من قبل');
+      }
     } catch (err) {
       setStatusMsg(err instanceof Error ? err.message : 'تعذر رفع الصورة.');
     } finally {
@@ -497,19 +592,107 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     />
                   </div>
 
-                  <div>
-                    <label className="block text-xs font-bold text-rose-200 mb-1">
-                      تغيير الرمز السري الرئيسي (اختياري)
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[11px] font-bold text-sky-200 mb-1">
+                        رمز الزوج (ذكر)
+                      </label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        dir="ltr"
+                        maxLength={6}
+                        value={malePinDraft}
+                        onChange={(e) => setMalePinDraft(e.target.value.replace(/\D/g, ''))}
+                        className="font-mono-num w-full rounded-xl border border-sky-300/30 bg-black/45 px-3 py-2 text-center text-xs font-bold text-white focus:border-sky-400 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-rose-200 mb-1">
+                        رمز الزوجة (أنثى)
+                      </label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        dir="ltr"
+                        maxLength={6}
+                        value={femalePinDraft}
+                        onChange={(e) => setFemalePinDraft(e.target.value.replace(/\D/g, ''))}
+                        className="font-mono-num w-full rounded-xl border border-rose-300/30 bg-black/45 px-3 py-2 text-center text-xs font-bold text-white focus:border-rose-400 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Periodic Playtime Reminder Controls */}
+                  <div className="rounded-2xl border border-rose-300/20 bg-black/35 p-3 space-y-2.5">
+                    <label className="flex items-center justify-between gap-2 cursor-pointer">
+                      <span className="flex items-center gap-1.5 text-xs font-extrabold text-amber-200">
+                        <BellRing className="h-4 w-4 text-rose-400" />
+                        <span>رسالة دورية أثناء اللعب</span>
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={reminderEnabled}
+                        onChange={(e) => setReminderEnabled(e.target.checked)}
+                        className="h-4 w-4 accent-rose-500"
+                      />
                     </label>
-                    <input
-                      type="password"
-                      inputMode="numeric"
-                      dir="ltr"
-                      value={newPin}
-                      onChange={(e) => setNewPin(e.target.value)}
-                      placeholder="اتركه فارغاً للإبقاء على الرمز الحالي"
-                      className="font-mono-num w-full rounded-xl border border-rose-300/25 bg-black/45 px-3 py-2 text-xs text-white focus:border-rose-400 focus:outline-none"
-                    />
+
+                    {reminderEnabled && (
+                      <>
+                        <div>
+                          <div className="flex items-center justify-between text-[11px] font-bold text-rose-200 mb-1">
+                            <span>المدة بين كل رسالة (بالدقائق)</span>
+                            <span className="font-mono-num text-amber-200">
+                              كل {reminderMinutes} د
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <input
+                              type="number"
+                              min={1}
+                              max={120}
+                              dir="ltr"
+                              value={reminderMinutes}
+                              onChange={(e) =>
+                                setReminderMinutes(Math.max(1, Number(e.target.value) || 1))
+                              }
+                              className="font-mono-num w-16 rounded-xl border border-rose-300/25 bg-black/45 px-2 py-1.5 text-center text-xs font-bold text-white"
+                            />
+                            <div className="grid flex-1 grid-cols-4 gap-1">
+                              {[1, 2, 5, 10].map((m) => (
+                                <button
+                                  key={m}
+                                  type="button"
+                                  onClick={() => setReminderMinutes(m)}
+                                  className={`rounded-lg py-1.5 text-[11px] font-bold transition ${
+                                    reminderMinutes === m
+                                      ? 'bg-rose-600 text-white'
+                                      : 'bg-white/10 text-rose-200 hover:bg-white/15'
+                                  }`}
+                                >
+                                  {m}د
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-[11px] font-bold text-rose-200 mb-1">
+                            نص الرسالة التي ستظهر
+                          </label>
+                          <input
+                            type="text"
+                            value={reminderMessage}
+                            onChange={(e) => setReminderMessage(e.target.value)}
+                            maxLength={140}
+                            placeholder="اكتب الرسالة التي ستظهر كل فترة..."
+                            className="w-full rounded-xl border border-rose-300/25 bg-black/45 px-3 py-2 text-xs text-white focus:border-rose-400 focus:outline-none"
+                          />
+                        </div>
+                      </>
+                    )}
                   </div>
 
                   {/* Anniversary & Upcoming Special Date */}
@@ -1079,6 +1262,28 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </>
         )}
       </div>
+
+      {/* Duplicate Photo Alert Modal with Close Button */}
+      {duplicateAlert && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-xs rounded-3xl border border-amber-300/45 bg-[#240612] p-5 text-center text-white shadow-2xl space-y-3">
+            <AlertCircle className="mx-auto h-10 w-10 text-amber-300" />
+            <h3 className="text-base font-extrabold text-amber-200">
+              {duplicateAlert}
+            </h3>
+            <p className="text-xs text-rose-100/90 leading-relaxed">
+              هذه الصورة موجودة بالفعل في المعرض المشترك، لا حاجة لتكرار رفعها.
+            </p>
+            <button
+              type="button"
+              onClick={() => setDuplicateAlert(null)}
+              className="w-full min-h-[42px] rounded-2xl bg-rose-600 text-sm font-extrabold text-white shadow hover:bg-rose-500 transition"
+            >
+              إغلاق
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
