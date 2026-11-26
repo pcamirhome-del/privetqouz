@@ -1,3 +1,4 @@
+import {getAnalytics, isSupported as isAnalyticsSupported} from 'firebase/analytics';
 import {initializeApp} from 'firebase/app';
 import {
   type Database,
@@ -24,7 +25,6 @@ import {
   ref as storageRef,
   uploadBytes,
 } from 'firebase/storage';
-import firebaseConfig from '../../firebase-applet-config.json';
 import {
   DEFAULT_ROOM_SETTINGS,
   EncryptedRoomSettings,
@@ -40,15 +40,53 @@ import {
 import {computeJoinCodeHash, decryptPayload, encryptPayload} from './crypto';
 import {compressImageFile, fileToDataUrl} from './mediaStore';
 
+const firebaseConfig = {
+  apiKey: 'AIzaSyAdmrpXTv7R6Q2vJvlLL23e750h6sSQdTU',
+  authDomain: 'qouz-41644.firebaseapp.com',
+  databaseURL: 'https://qouz-41644-default-rtdb.firebaseio.com',
+  projectId: 'qouz-41644',
+  storageBucket: 'qouz-41644.firebasestorage.app',
+  messagingSenderId: '571565843339',
+  appId: '1:571565843339:web:f1a98f9506c6836036458e',
+  measurementId: 'G-890QZ0NKS7',
+  firestoreDatabaseId: '(default)',
+};
+
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const storage = getStorage(app);
 
-const rtdbUrl =
-  (firebaseConfig as {databaseURL?: string}).databaseURL ||
-  import.meta.env.VITE_FIREBASE_DATABASE_URL ||
-  '';
-export const rtdb: Database | null = rtdbUrl ? getDatabase(app, rtdbUrl) : null;
+if (typeof window !== 'undefined') {
+  isAnalyticsSupported()
+    .then((supported) => {
+      if (supported) getAnalytics(app);
+    })
+    .catch(() => {});
+}
+
+function initOptionalRtdb(): Database | null {
+  const raw =
+    import.meta.env.VITE_FIREBASE_DATABASE_URL ||
+    firebaseConfig.databaseURL ||
+    '';
+  const trimmed = String(raw).trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = new URL(trimmed);
+    const host = parsed.hostname.toLowerCase();
+    const isFirebaseRtdbHost =
+      host.endsWith('.firebaseio.com') ||
+      host.endsWith('.firebasedatabase.app');
+    if (parsed.protocol !== 'https:' || !isFirebaseRtdbHost) {
+      return null;
+    }
+    return getDatabase(app, parsed.origin);
+  } catch {
+    return null;
+  }
+}
+
+export const rtdb: Database | null = initOptionalRtdb();
 
 const DEVICE_UID_KEY = 'nabd_device_uid';
 
