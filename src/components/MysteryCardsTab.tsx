@@ -17,6 +17,11 @@ interface MysteryCardsTabProps {
   cardsState: MysteryCardsLiveState | null;
   onUpdateCards: (next: MysteryCardsLiveState) => Promise<void>;
   onTriggerReaction: (evt: ReactionEvent) => Promise<void>;
+  confirmedTaskIds?: string[];
+  onConfirmTaskCompletion?: (
+    taskId: string,
+    executingRole: PartnerRole
+  ) => Promise<void>;
 }
 
 function getLocalDayKey(date = new Date()): string {
@@ -66,6 +71,8 @@ export const MysteryCardsTab: React.FC<MysteryCardsTabProps> = ({
   cardsState,
   onUpdateCards,
   onTriggerReaction,
+  confirmedTaskIds = [],
+  onConfirmTaskCompletion,
 }) => {
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
   const [flippingSlot, setFlippingSlot] = useState<number | null>(null);
@@ -219,12 +226,35 @@ export const MysteryCardsTab: React.FC<MysteryCardsTabProps> = ({
         </div>
 
         {activeDailyCard && (
-          <div className="mt-1.5 flex items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-rose-600/35 via-pink-500/35 to-rose-600/35 px-2.5 py-1 text-[11px] font-bold text-white border border-rose-200/20">
-            <Gift className="h-3.5 w-3.5 text-amber-300 shrink-0" />
-            <span className="truncate">
-              مكافأة اليوم ({activeDailyCard.flippedBy === 'male' ? 'الحبيب' : 'الحبيبة'}):{' '}
-              <strong className="text-amber-200">{activeDailyCard.text}</strong>
-            </span>
+          <div className="mt-1.5 flex items-center justify-between gap-2 rounded-xl bg-gradient-to-r from-rose-600/35 via-pink-500/35 to-rose-600/35 px-2.5 py-1 text-[11px] font-bold text-white border border-rose-200/20">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <Gift className="h-3.5 w-3.5 text-amber-300 shrink-0" />
+              <span className="truncate">
+                مكافأة اليوم ({activeDailyCard.flippedBy === 'male' ? 'الزوج' : 'الزوجة'}):{' '}
+                <strong className="text-amber-200">{activeDailyCard.text}</strong>
+              </span>
+            </div>
+            {onConfirmTaskCompletion &&
+              activeDailyCard.flippedBy !== role &&
+              (() => {
+                const taskId = `card_${todayKey}_${activeDailyCard.flippedBy}_${activeDailyCard.slotIndex}`;
+                const done = confirmedTaskIds.includes(taskId);
+                return done ? (
+                  <span className="shrink-0 rounded-lg bg-emerald-600/85 px-2 py-0.5 text-[10px] font-extrabold text-white">
+                    تم +1 ✅
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onConfirmTaskCompletion(taskId, activeDailyCard.flippedBy)
+                    }
+                    className="shrink-0 rounded-lg bg-emerald-500 px-2.5 py-0.5 text-[10px] font-extrabold text-white shadow hover:bg-emerald-400 active:scale-95 transition"
+                  >
+                    تم التنفيذ ✅
+                  </button>
+                );
+              })()}
           </div>
         )}
 
@@ -296,19 +326,58 @@ export const MysteryCardsTab: React.FC<MysteryCardsTabProps> = ({
                     backfaceVisibility: 'hidden',
                     transform: 'rotateY(180deg)',
                   }}
-                  className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 rounded-2xl border-2 border-amber-300/70 bg-gradient-to-br from-rose-600/90 via-pink-700/90 to-[#3a0a1e]/95 p-3 text-center shadow-2xl backdrop-blur-md"
+                  className="absolute inset-0 flex flex-col items-center justify-center gap-1 rounded-2xl border-2 border-amber-300/70 bg-gradient-to-br from-rose-600/90 via-pink-700/90 to-[#3a0a1e]/95 p-2.5 text-center shadow-2xl backdrop-blur-md"
                 >
-                  <span className="rounded-full bg-black/35 px-2.5 py-0.5 text-[10px] font-extrabold text-amber-200 border border-amber-200/30">
+                  <span className="rounded-full bg-black/35 px-2 py-0.5 text-[9px] font-extrabold text-amber-200 border border-amber-200/30">
                     {flippedRecord?.flippedBy === 'male'
-                      ? 'اختيار الحبيب 💙'
-                      : 'اختيار الحبيبة 💖'}
+                      ? 'اختيار الزوج 💙'
+                      : 'اختيار الزوجة 💖'}
                   </span>
-                  <p className="text-xs sm:text-sm font-extrabold leading-snug text-white drop-shadow break-words line-clamp-3">
+                  <p className="text-[11px] sm:text-xs font-extrabold leading-snug text-white drop-shadow break-words line-clamp-3">
                     {flippedRecord?.text || card.text}
                   </p>
-                  <span className="text-[10px] font-bold text-rose-100/90">
-                    تم تفعيلها لليوم ❤️
-                  </span>
+                  {flippedRecord &&
+                  onConfirmTaskCompletion &&
+                  flippedRecord.flippedBy !== role ? (
+                    (() => {
+                      const taskId = `card_${todayKey}_${flippedRecord.flippedBy}_${flippedRecord.slotIndex}`;
+                      const done = confirmedTaskIds.includes(taskId);
+                      return done ? (
+                        <span className="rounded-lg bg-emerald-600/85 px-2 py-0.5 text-[9px] font-extrabold text-white">
+                          تم احتساب +1 ✅
+                        </span>
+                      ) : (
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void onConfirmTaskCompletion(
+                              taskId,
+                              flippedRecord.flippedBy
+                            );
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              void onConfirmTaskCompletion(
+                                taskId,
+                                flippedRecord.flippedBy
+                              );
+                            }
+                          }}
+                          className="cursor-pointer rounded-lg bg-emerald-500 px-2.5 py-1 text-[10px] font-extrabold text-white shadow hover:bg-emerald-400"
+                        >
+                          تم التنفيذ ✅
+                        </span>
+                      );
+                    })()
+                  ) : (
+                    <span className="text-[9px] font-bold text-rose-100/90">
+                      تم تفعيلها لليوم ❤️
+                    </span>
+                  )}
                 </div>
               </div>
             </button>

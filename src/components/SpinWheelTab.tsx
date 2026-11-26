@@ -16,6 +16,11 @@ interface SpinWheelTabProps {
   segments: WheelSegment[];
   wheelState: WheelLiveState | null;
   onUpdateWheel: (next: WheelLiveState) => Promise<void>;
+  confirmedTaskIds?: string[];
+  onConfirmTaskCompletion?: (
+    taskId: string,
+    executingRole: PartnerRole
+  ) => Promise<void>;
 }
 
 function getLocalDayKey(date = new Date()): string {
@@ -53,6 +58,8 @@ export const SpinWheelTab: React.FC<SpinWheelTabProps> = ({
   segments,
   wheelState,
   onUpdateWheel,
+  confirmedTaskIds = [],
+  onConfirmTaskCompletion,
 }) => {
   const [rotation, setRotation] = useState(0);
   const [isAnimating, setIsAnimating] = useState(false);
@@ -455,9 +462,32 @@ export const SpinWheelTab: React.FC<SpinWheelTabProps> = ({
       {/* Bottom Action Controls */}
       <div className="w-full max-w-sm space-y-1.5">
         {todayFinalDraw?.status === 'revealed' && !isDrawShuffling && (
-          <div className="rounded-xl border border-amber-300/45 bg-gradient-to-r from-rose-700/75 via-amber-600/55 to-rose-700/75 px-3 py-1.5 text-center text-xs font-extrabold text-white shadow">
-            ✨ الاختيار النهائي لليوم:{' '}
-            <span className="text-amber-200">{todayFinalDraw.chosenLabel}</span>
+          <div className="flex items-center justify-between gap-2 rounded-xl border border-amber-300/45 bg-gradient-to-r from-rose-700/75 via-amber-600/55 to-rose-700/75 px-3 py-1.5 text-xs font-extrabold text-white shadow">
+            <span className="truncate">
+              ✨ الاختيار النهائي لليوم:{' '}
+              <span className="text-amber-200">{todayFinalDraw.chosenLabel}</span>
+            </span>
+            {onConfirmTaskCompletion &&
+              role !== todayFinalDraw.chosenRole &&
+              (() => {
+                const drawTaskId = `wheel_draw_${todayFinalDraw.drawId}`;
+                const done = confirmedTaskIds.includes(drawTaskId);
+                return done ? (
+                  <span className="shrink-0 rounded-lg bg-emerald-600/80 px-2 py-0.5 text-[10px] font-bold text-white">
+                    تم +1 ✅
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onConfirmTaskCompletion(drawTaskId, todayFinalDraw.chosenRole)
+                    }
+                    className="shrink-0 rounded-lg bg-emerald-500 px-2.5 py-1 text-[11px] font-extrabold text-white shadow hover:bg-emerald-400 active:scale-95 transition"
+                  >
+                    تم التنفيذ ✅
+                  </button>
+                );
+              })()}
           </div>
         )}
 
@@ -585,7 +615,7 @@ export const SpinWheelTab: React.FC<SpinWheelTabProps> = ({
                   </button>
                 </div>
               ) : (
-                <div className="mt-3 space-y-3">
+                <div className="mt-3 space-y-2.5">
                   <p
                     className={`text-sm font-bold ${
                       wheelState.status === 'accepted'
@@ -597,6 +627,28 @@ export const SpinWheelTab: React.FC<SpinWheelTabProps> = ({
                       ? `تم قبول النتيجة بواسطة ${wheelState.respondedBy === 'male' ? 'الزوج' : 'الزوجة'} ❤️`
                       : `تم رفض النتيجة بواسطة ${wheelState.respondedBy === 'male' ? 'الزوج' : 'الزوجة'}`}
                   </p>
+                  {wheelState.status === 'accepted' &&
+                    onConfirmTaskCompletion &&
+                    role !== wheelState.spunBy &&
+                    (() => {
+                      const spinTaskId = `wheel_${wheelState.spinId}`;
+                      const done = confirmedTaskIds.includes(spinTaskId);
+                      return done ? (
+                        <div className="rounded-xl bg-emerald-600/35 border border-emerald-400/40 py-2 text-xs font-extrabold text-emerald-200">
+                          تم احتساب +1 نقطة لـ{wheelState.spunBy === 'male' ? 'لزوج' : 'لزوجة'} ✅
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onConfirmTaskCompletion(spinTaskId, wheelState.spunBy)
+                          }
+                          className="w-full min-h-[44px] rounded-2xl bg-gradient-to-r from-emerald-600 to-emerald-500 px-4 py-2 text-sm font-extrabold text-white shadow-lg hover:from-emerald-500 hover:to-emerald-400 active:scale-95 transition"
+                        >
+                          تم التنفيذ ✅ (+1 نقطة)
+                        </button>
+                      );
+                    })()}
                   <button
                     type="button"
                     onClick={handleCloseModal}

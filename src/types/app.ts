@@ -53,6 +53,7 @@ export interface EncryptedRoomSettings {
   periodicReminderEnabled?: boolean;
   periodicReminderMinutes?: number;
   periodicReminderMessage?: string;
+  rewardTargetPoints?: number;
   askedQuestionIds: string[];
   customQuestions: QuizQuestion[];
   allowZoom: boolean;
@@ -135,6 +136,34 @@ export interface ReactionEvent {
   source?: 'ping' | 'card' | 'quiz';
   timestamp: number;
 }
+
+export type ScreenEffectType = 'kisses' | 'fire_hearts' | 'roses';
+
+export interface ScreenEffectEvent {
+  id: string;
+  effect: ScreenEffectType;
+  sentBy: PartnerRole;
+  timestamp: number;
+}
+
+export interface SpecialRewardRequest {
+  id: string;
+  requestedBy: PartnerRole;
+  rewardText: string;
+  pointsSpent: number;
+  status: 'pending' | 'accepted';
+  createdAt: number;
+}
+
+export interface CouplesScoreState {
+  malePoints: number;
+  femalePoints: number;
+  confirmedTaskIds: string[];
+  activeRewardRequest?: SpecialRewardRequest | null;
+  updatedAt: number;
+}
+
+export type AmbientSoundMode = 'rain' | 'waves' | 'romantic';
 
 export interface SharedPhotoItem {
   id: string;
@@ -231,6 +260,7 @@ export const DEFAULT_ROOM_SETTINGS: EncryptedRoomSettings = {
   periodicReminderEnabled: true,
   periodicReminderMinutes: 2,
   periodicReminderMessage: 'تذكير لطيف: ابتسما لبعضكما الآن وأرسلا قبلة ❤️💋',
+  rewardTargetPoints: 5,
   askedQuestionIds: [],
   customQuestions: [],
   allowZoom: false,

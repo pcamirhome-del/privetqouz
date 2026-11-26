@@ -158,8 +158,27 @@ export class SoundManager {
     osc.start(now);
     osc.stop(now + 0.28);
   }
+
+  // Soft bubble pop for incoming full-screen reaction showers
+  public playPop() {
+    const ctx = this.getContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(420, now);
+    osc.frequency.exponentialRampToValueAtTime(960, now + 0.08);
+    gain.gain.setValueAtTime(0.11, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.16);
+  }
 }
 
 export const soundEngine = new SoundManager();
 export const soundManager = soundEngine;
+
 

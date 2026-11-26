@@ -1,11 +1,15 @@
 import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {AnimatePresence, motion} from 'motion/react';
+import confetti from 'canvas-confetti';
 import {
   BellRing,
   Disc3,
+  EyeOff,
+  Gift,
   HeartHandshake,
   Images,
   LogOut,
+  Music,
   Settings,
   Sparkles,
   Volume2,
@@ -14,6 +18,7 @@ import {
   X,
 } from 'lucide-react';
 import {
+  CouplesScoreState,
   DEFAULT_ROOM_SETTINGS,
   EncryptedRoomSettings,
   MainTab,
@@ -24,6 +29,8 @@ import {
   PhotosLiveState,
   QuizRoundState,
   ReactionEvent,
+  ScreenEffectEvent,
+  ScreenEffectType,
   SharedPhotoItem,
   WheelLiveState,
 } from './types/app';
@@ -53,6 +60,7 @@ import {
   saveEncryptedLocalMedia,
 } from './services/mediaStore';
 import {soundEngine} from './services/sound';
+import {ambientAudio} from './services/ambientAudio';
 import {useOnlineStatus} from './hooks/useOnlineStatus';
 import {ErrorBoundary} from './components/ErrorBoundary';
 import {LoginScreen} from './components/LoginScreen';
@@ -71,6 +79,12 @@ import {MysteryCardsTab} from './components/MysteryCardsTab';
 import {PartnerSyncTab} from './components/PartnerSyncTab';
 import {LoveCounterBar} from './components/LoveCounterBar';
 import {SettingsModal} from './components/SettingsModal';
+import {PrivacyLockOverlay} from './components/PrivacyLockOverlay';
+import {ScreenEffectOverlay} from './components/ScreenEffectOverlay';
+import {
+  PartnerRewardAlertOverlay,
+  SpecialRewardModal,
+} from './components/SpecialRewardModal';
 
 const DEFAULT_BG_IMAGE = '/src/assets/images/default_romantic_bg_1795637641791.jpg';
 const STORAGE_ROOM_KEY = 'nabd_last_room_id';
@@ -89,6 +103,7 @@ function MainAppContent() {
   const [quizState, setQuizState] = useState<QuizRoundState | null>(null);
   const [photosState, setPhotosState] = useState<PhotosLiveState | null>(null);
   const [cardsState, setCardsState] = useState<MysteryCardsLiveState | null>(null);
+  const [scoreState, setScoreState] = useState<CouplesScoreState | null>(null);
   const [photos, setPhotos] = useState<SharedPhotoItem[]>([]);
   const [malePresence, setMalePresence] = useState<PartnerPresenceData | null>(null);
   const [femalePresence, setFemalePresence] = useState<PartnerPresenceData | null>(
@@ -98,9 +113,16 @@ function MainAppContent() {
   const [activeTab, setActiveTab] = useState<MainTab>('wheel');
   const [showEntrance, setShowEntrance] = useState(false);
   const [activeReaction, setActiveReaction] = useState<ReactionEvent | null>(null);
+  const [activeScreenEffect, setActiveScreenEffect] =
+    useState<ScreenEffectEvent | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [partnerModalOpen, setPartnerModalOpen] = useState(false);
+  const [rewardModalOpen, setRewardModalOpen] = useState(false);
+  const [privacyLocked, setPrivacyLocked] = useState(false);
   const [muted, setMuted] = useState<boolean>(() => soundEngine.muted);
+  const [ambientPlaying, setAmbientPlaying] = useState<boolean>(
+    () => ambientAudio.isPlaying
+  );
   const [clapLabel, setClapLabel] = useState<string | null>(null);
   const [periodicReminderVisible, setPeriodicReminderVisible] = useState(false);
   const [localBgUrl, setLocalBgUrl] = useState<string>('');
@@ -113,6 +135,7 @@ function MainAppContent() {
   } | null>(null);
 
   const lastReactionIdRef = useRef<string | null>(null);
+  const lastScreenEffectIdRef = useRef<string | null>(null);
   const lastWinWheelIdRef = useRef<string | null>(null);
   const lastWinDrawIdRef = useRef<string | null>(null);
   const lastWinQuizIdRef = useRef<string | null>(null);
@@ -208,6 +231,37 @@ function MainAppContent() {
       setPhotosState
     );
     const unsubCards = subscribeMysteryCardsState(roomId, pin, setCardsState);
+    const unsubScores = subscribeLiveState<CouplesScoreState>(
+      roomId,
+      pin,
+      'scores',
+      setScoreState
+    );
+    const unsubScreenEffect = subscribeLiveState<ScreenEffectEvent>(
+      roomId,
+      pin,
+      'screenEffect',
+      (evt) => {
+        if (!evt || evt.id === lastScreenEffectIdRef.current) return;
+        if (Date.now() - evt.timestamp > 10000) return;
+        lastScreenEffectIdRef.current = evt.id;
+        // Launch 4-second full-screen particle shower on the partner's active screen
+        if (evt.sentBy !== role) {
+          setActiveScreenEffect(evt);
+          soundEngine.playPop();
+          if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+            try {
+              navigator.vibrate([150, 80, 150]);
+            } catch {
+              // ignore unsupported vibration
+            }
+          }
+          setTimeout(() => {
+            setActiveScreenEffect((curr) => (curr?.id === evt.id ? null : curr));
+          }, 4000);
+        }
+      }
+    );
     const unsubBackground = subscribeSharedBackground(roomId, pin, (bg) => {
       if (!bg) return;
       setSyncedBgPayload(bg);
@@ -280,6 +334,8 @@ function MainAppContent() {
       unsubQuiz();
       unsubPhotos();
       unsubCards();
+      unsubScores();
+      unsubScreenEffect();
       unsubBackground();
       unsubGallery();
       unsubReaction();
@@ -516,6 +572,104 @@ function MainAppContent() {
     await deleteEncryptedPhoto(session.roomId, session.pin, photoId, photosState);
   };
 
+  const handleConfirmTaskCompletion = useCallback(
+    async (taskId: string, executingRole: PartnerRole) => {
+      if (!session) return;
+      const existingIds = scoreState?.confirmedTaskIds || [];
+      if (existingIds.includes(taskId)) return;
+
+      const nextScores: CouplesScoreState = {
+        malePoints:
+          (scoreState?.malePoints || 0) + (executingRole === 'male' ? 1 : 0),
+        femalePoints:
+          (scoreState?.femalePoints || 0) + (executingRole === 'female' ? 1 : 0),
+        confirmedTaskIds: [...existingIds.slice(-49), taskId],
+        activeRewardRequest: scoreState?.activeRewardRequest || null,
+        updatedAt: Date.now(),
+      };
+
+      setScoreState(nextScores);
+      soundEngine.playWin();
+      confetti({
+        particleCount: 60,
+        spread: 70,
+        origin: {y: 0.6},
+        colors: ['#34d399', '#fde68a', '#fb7185', '#ffffff'],
+      });
+      triggerClap(
+        `+1 نقطة لـ${executingRole === 'male' ? 'لزوج' : 'لزوجة'}! ✅`
+      );
+      await writeLiveState(session.roomId, session.pin, 'scores', nextScores);
+    },
+    [session, scoreState, triggerClap]
+  );
+
+  const handleSubmitSpecialReward = useCallback(
+    async (rewardText: string, deductPoints: boolean) => {
+      if (!session) return;
+      const targetPoints = Math.max(1, settings.rewardTargetPoints ?? 5);
+      const currMale = scoreState?.malePoints || 0;
+      const currFemale = scoreState?.femalePoints || 0;
+
+      const nextScores: CouplesScoreState = {
+        malePoints:
+          deductPoints && session.role === 'male'
+            ? Math.max(0, currMale - targetPoints)
+            : currMale,
+        femalePoints:
+          deductPoints && session.role === 'female'
+            ? Math.max(0, currFemale - targetPoints)
+            : currFemale,
+        confirmedTaskIds: scoreState?.confirmedTaskIds || [],
+        activeRewardRequest: {
+          id: `rew_${Date.now().toString(36)}`,
+          requestedBy: session.role,
+          rewardText,
+          pointsSpent: deductPoints ? targetPoints : 0,
+          status: 'pending',
+          createdAt: Date.now(),
+        },
+        updatedAt: Date.now(),
+      };
+
+      setScoreState(nextScores);
+      soundEngine.playKissPing();
+      await writeLiveState(session.roomId, session.pin, 'scores', nextScores);
+    },
+    [session, settings.rewardTargetPoints, scoreState]
+  );
+
+  const handleAcknowledgeSpecialReward = useCallback(async () => {
+    if (!session || !scoreState?.activeRewardRequest) return;
+    const nextScores: CouplesScoreState = {
+      ...scoreState,
+      activeRewardRequest: {
+        ...scoreState.activeRewardRequest,
+        status: 'accepted',
+      },
+      updatedAt: Date.now(),
+    };
+    setScoreState(nextScores);
+    soundEngine.playWin();
+    triggerClap('تم تأكيد طلب المكافأة الخاصة! 🎁❤️');
+    await writeLiveState(session.roomId, session.pin, 'scores', nextScores);
+  }, [session, scoreState, triggerClap]);
+
+  const handleSendScreenEffect = useCallback(
+    async (effect: ScreenEffectType) => {
+      if (!session) return;
+      soundEngine.playPop();
+      const evt: ScreenEffectEvent = {
+        id: `fx_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 5)}`,
+        effect,
+        sentBy: session.role,
+        timestamp: Date.now(),
+      };
+      await writeLiveState(session.roomId, session.pin, 'screenEffect', evt);
+    },
+    [session]
+  );
+
   const handleSignOut = async () => {
     if (session) {
       await updatePartnerPresence(session.roomId, session.pin, session.role, {
@@ -524,10 +678,15 @@ function MainAppContent() {
         lastSeen: Date.now(),
       }).catch(() => {});
     }
+    ambientAudio.stop();
+    setAmbientPlaying(false);
+    setPrivacyLocked(false);
+    setRewardModalOpen(false);
     setPartnerModalOpen(false);
     setSettingsOpen(false);
     setShowEntrance(false);
     setActiveReaction(null);
+    setActiveScreenEffect(null);
     setClapLabel(null);
     setPeriodicReminderVisible(false);
     setSession(null);
@@ -568,6 +727,13 @@ function MainAppContent() {
     partnerPresence?.online &&
       Date.now() - (partnerPresence?.lastSeen || 0) < 90000
   );
+
+  const malePoints = scoreState?.malePoints ?? 0;
+  const femalePoints = scoreState?.femalePoints ?? 0;
+  const myPoints = session.role === 'male' ? malePoints : femalePoints;
+  const targetPoints = Math.max(1, settings.rewardTargetPoints ?? 5);
+  const canRequestReward = myPoints >= targetPoints;
+  const confirmedTaskIds = scoreState?.confirmedTaskIds || [];
 
   return (
     <div className="relative flex h-[100dvh] w-screen flex-col overflow-hidden bg-[#140309] text-rose-50">
@@ -610,83 +776,174 @@ function MainAppContent() {
 
       {/* Main Mobile-Locked App Shell */}
       <div className="relative z-20 mx-auto flex h-full w-full max-w-2xl flex-col px-2.5 pt-2 pb-2">
-        {/* Top Marquee Banner + Top-Left Settings Button */}
-        <header className="relative flex h-10 shrink-0 items-center justify-between gap-2 rounded-2xl border border-rose-300/25 bg-black/50 px-2 backdrop-blur-xl shadow-lg">
-          {/* Top-Left Controls (forced left position in RTL via order/dir) */}
-          <div className="flex items-center gap-1 shrink-0 order-last">
-            {/* Active Account Role Badge (الزوج / الزوجة) */}
-            <span
-              className={`flex h-7 items-center rounded-xl border px-2 text-[11px] font-extrabold shadow-sm ${
-                session.role === 'male'
-                  ? 'border-sky-300/45 bg-sky-500/25 text-sky-100'
-                  : 'border-pink-300/45 bg-pink-500/25 text-pink-100'
-              }`}
-            >
-              {session.role === 'male' ? 'الزوج' : 'الزوجة'}
-            </span>
-            <button
-              type="button"
-              onClick={() => setPartnerModalOpen(true)}
-              aria-label="حالة الشريك وإرسال نبضة"
-              className="relative flex h-8 w-8 items-center justify-center rounded-xl bg-white/10 text-rose-100 hover:bg-rose-500/30 transition"
-            >
-              <HeartHandshake className="h-4 w-4" />
+        {/* Top Compact 2-Tier Header: Ticker + Controls + Reactions + Score */}
+        <header className="relative shrink-0 rounded-2xl border border-rose-300/25 bg-black/50 px-2 py-1 backdrop-blur-xl shadow-lg space-y-1">
+          {/* Row 1: Marquee + Role + Ambient + Mute + Privacy Lock + Settings + LogOut */}
+          <div className="flex h-8 items-center justify-between gap-1.5">
+            <div className="flex items-center gap-1 shrink-0 order-last">
+              {/* Active Account Role Badge (الزوج / الزوجة) */}
               <span
-                className={`absolute top-1 right-1 h-2 w-2 rounded-full ${
-                  isPartnerOnline ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400/50'
+                className={`flex h-7 items-center rounded-xl border px-2 text-[10px] sm:text-[11px] font-extrabold shadow-sm ${
+                  session.role === 'male'
+                    ? 'border-sky-300/45 bg-sky-500/25 text-sky-100'
+                    : 'border-pink-300/45 bg-pink-500/25 text-pink-100'
                 }`}
-              />
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                soundEngine.muted = !muted;
-                setMuted(!muted);
-              }}
-              aria-label={muted ? 'تشغيل الصوت' : 'كتم الصوت'}
-              className="flex h-8 w-8 items-center justify-center rounded-xl bg-white/10 text-rose-100 hover:bg-rose-500/30 transition"
-            >
-              {muted ? (
-                <VolumeX className="h-4 w-4" />
-              ) : (
-                <Volume2 className="h-4 w-4" />
-              )}
-            </button>
-            <button
-              type="button"
-              onClick={() => setSettingsOpen(true)}
-              aria-label="الإعدادات"
-              title="الإعدادات"
-              className="flex h-8 w-8 items-center justify-center rounded-xl bg-rose-600/80 text-white hover:bg-rose-500 transition shadow"
-            >
-              <Settings className="h-4 w-4" />
-            </button>
-            <button
-              type="button"
-              onClick={handleSignOut}
-              aria-label="تسجيل الخروج"
-              title="تسجيل الخروج"
-              className="flex h-8 w-8 items-center justify-center rounded-xl border border-rose-300/35 bg-rose-950/75 text-rose-100 hover:bg-red-600 hover:text-white transition shadow"
-            >
-              <LogOut className="h-4 w-4" />
-            </button>
+              >
+                {session.role === 'male' ? 'الزوج' : 'الزوجة'}
+              </span>
+              {/* Ambient Lounge Audio Quick Toggle */}
+              <button
+                type="button"
+                onClick={() => {
+                  const next = ambientAudio.toggle();
+                  setAmbientPlaying(next);
+                }}
+                aria-label={ambientPlaying ? 'إيقاف الأجواء الصوتية' : 'تشغيل الأجواء الصوتية'}
+                title="الأجواء الصوتية"
+                className={`flex h-7 w-7 items-center justify-center rounded-xl transition ${
+                  ambientPlaying
+                    ? 'bg-amber-500/35 text-amber-200 border border-amber-300/55 shadow-[0_0_10px_rgba(251,191,36,0.45)] animate-pulse'
+                    : 'bg-white/10 text-rose-100 hover:bg-rose-500/30'
+                }`}
+              >
+                <Music className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  soundEngine.muted = !muted;
+                  setMuted(!muted);
+                }}
+                aria-label={muted ? 'تشغيل الصوت' : 'كتم الصوت'}
+                title={muted ? 'تشغيل الصوت' : 'كتم الصوت'}
+                className="flex h-7 w-7 items-center justify-center rounded-xl bg-white/10 text-rose-100 hover:bg-rose-500/30 transition"
+              >
+                {muted ? (
+                  <VolumeX className="h-3.5 w-3.5" />
+                ) : (
+                  <Volume2 className="h-3.5 w-3.5" />
+                )}
+              </button>
+              {/* One-Tap Quick Privacy Screen Lock */}
+              <button
+                type="button"
+                onClick={() => setPrivacyLocked(true)}
+                aria-label="قفل الخصوصية السريع"
+                title="قفل الخصوصية السريع"
+                className="flex h-7 w-7 items-center justify-center rounded-xl bg-white/10 text-amber-200 hover:bg-amber-500/30 transition"
+              >
+                <EyeOff className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setSettingsOpen(true)}
+                aria-label="الإعدادات"
+                title="الإعدادات"
+                className="flex h-7 w-7 items-center justify-center rounded-xl bg-rose-600/80 text-white hover:bg-rose-500 transition shadow"
+              >
+                <Settings className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={handleSignOut}
+                aria-label="تسجيل الخروج"
+                title="تسجيل الخروج"
+                className="flex h-7 w-7 items-center justify-center rounded-xl border border-rose-300/35 bg-rose-950/75 text-rose-100 hover:bg-red-600 hover:text-white transition shadow"
+              >
+                <LogOut className="h-3.5 w-3.5" />
+              </button>
+            </div>
+
+            {/* Scrolling Romantic Ticker */}
+            <div className="flex-1 min-w-0 overflow-hidden px-1">
+              <div className="animate-marquee-rtl text-xs font-bold text-amber-100">
+                {settings.bannerText}
+              </div>
+            </div>
+
+            {!isOnline && (
+              <span
+                title="وضع عدم الاتصال"
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-amber-500/25 text-amber-200"
+              >
+                <WifiOff className="h-3.5 w-3.5" />
+              </span>
+            )}
           </div>
 
-          {/* Scrolling Romantic Ticker */}
-          <div className="flex-1 overflow-hidden px-1">
-            <div className="animate-marquee-rtl text-xs font-bold text-amber-100">
-              {settings.bannerText}
+          {/* Row 2: Heartbeat + 3 Live Screen Reactions (💋 🔥 🌹) + Live Score Badge + Special Reward Trigger */}
+          <div className="flex h-7 items-center justify-between gap-1.5 border-t border-rose-300/15 pt-1">
+            <div className="flex items-center gap-1 shrink-0">
+              <button
+                type="button"
+                onClick={() => setPartnerModalOpen(true)}
+                aria-label="حالة الشريك وإرسال نبضة"
+                title="حالة الشريك وإرسال نبضة"
+                className="relative flex h-6 w-7 items-center justify-center rounded-lg bg-white/10 text-rose-100 hover:bg-rose-500/30 transition"
+              >
+                <HeartHandshake className="h-3.5 w-3.5" />
+                <span
+                  className={`absolute top-0.5 right-0.5 h-1.5 w-1.5 rounded-full ${
+                    isPartnerOnline ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400/50'
+                  }`}
+                />
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSendScreenEffect('kisses')}
+                aria-label="إرسال أمطار قبلات"
+                title="أمطار من القبلات 💋"
+                className="flex h-6 w-7 items-center justify-center rounded-lg bg-rose-500/20 border border-rose-300/25 text-xs hover:bg-rose-500/40 active:scale-90 transition"
+              >
+                💋
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSendScreenEffect('fire_hearts')}
+                aria-label="إرسال قلوب نارية"
+                title="قلوب نارية 🔥"
+                className="flex h-6 w-7 items-center justify-center rounded-lg bg-amber-500/20 border border-amber-300/25 text-xs hover:bg-amber-500/40 active:scale-90 transition"
+              >
+                🔥
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSendScreenEffect('roses')}
+                aria-label="إرسال ورود حمراء"
+                title="ورود حمراء 🌹"
+                className="flex h-6 w-7 items-center justify-center rounded-lg bg-pink-500/20 border border-pink-300/25 text-xs hover:bg-pink-500/40 active:scale-90 transition"
+              >
+                🌹
+              </button>
+            </div>
+
+            <div className="flex items-center gap-1.5 min-w-0">
+              {canRequestReward && (
+                <button
+                  type="button"
+                  onClick={() => setRewardModalOpen(true)}
+                  className="flex h-6 shrink-0 items-center gap-1 rounded-lg bg-gradient-to-r from-amber-500 to-rose-500 px-2 text-[10px] font-extrabold text-white shadow animate-pulse hover:from-amber-400 hover:to-rose-400 transition"
+                >
+                  <Gift className="h-3 w-3 shrink-0" />
+                  <span>اطلب مكافأة خاصة 🎁</span>
+                </button>
+              )}
+
+              {/* Compact Live Score Counter */}
+              <div
+                title="نقاط الزوج والزوجة"
+                className="flex h-6 shrink-0 items-center gap-1.5 rounded-lg border border-amber-300/30 bg-black/45 px-2 text-[10px] font-extrabold text-white"
+              >
+                <span className="text-sky-200">
+                  👨🏻 <span className="font-mono-num">{malePoints}</span>
+                </span>
+                <span className="text-rose-300/50">|</span>
+                <span className="text-pink-200">
+                  👩🏻 <span className="font-mono-num">{femalePoints}</span>
+                </span>
+              </div>
             </div>
           </div>
-
-          {!isOnline && (
-            <span
-              title="وضع عدم الاتصال"
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-amber-500/25 text-amber-200"
-            >
-              <WifiOff className="h-3.5 w-3.5" />
-            </span>
-          )}
         </header>
 
         {/* Single-Row 3-Tab Navigation Bar */}
@@ -734,6 +991,8 @@ function MainAppContent() {
               onUpdateWheel={(next) =>
                 writeLiveState(session.roomId, session.pin, 'wheel', next)
               }
+              confirmedTaskIds={confirmedTaskIds}
+              onConfirmTaskCompletion={handleConfirmTaskCompletion}
             />
           )}
 
@@ -761,6 +1020,8 @@ function MainAppContent() {
               onUpdatePhotosState={(next) =>
                 writeLiveState(session.roomId, session.pin, 'photos', next)
               }
+              confirmedTaskIds={confirmedTaskIds}
+              onConfirmTaskCompletion={handleConfirmTaskCompletion}
             />
           )}
 
@@ -775,6 +1036,8 @@ function MainAppContent() {
               onTriggerReaction={(evt) =>
                 writeLiveState(session.roomId, session.pin, 'reaction', evt)
               }
+              confirmedTaskIds={confirmedTaskIds}
+              onConfirmTaskCompletion={handleConfirmTaskCompletion}
             />
           )}
         </main>
@@ -880,11 +1143,30 @@ function MainAppContent() {
         role={activeReaction?.triggeredBy || session.role}
       />
 
+      {/* Live Screen-Wide Reaction Shower (💋 / 🔥 / 🌹) */}
+      <ScreenEffectOverlay activeEffect={activeScreenEffect} />
+
+      {/* Special Reward Request & Partner Full-Focus Alert */}
+      <SpecialRewardModal
+        isOpen={rewardModalOpen}
+        role={session.role}
+        myPoints={myPoints}
+        targetPoints={targetPoints}
+        onClose={() => setRewardModalOpen(false)}
+        onSubmitRequest={handleSubmitSpecialReward}
+      />
+      <PartnerRewardAlertOverlay
+        request={scoreState?.activeRewardRequest}
+        myRole={session.role}
+        onAcknowledge={handleAcknowledgeSpecialReward}
+      />
+
       {/* PIN-Protected Settings Modal */}
       <SettingsModal
         isOpen={settingsOpen}
         onClose={() => {
           setBgPreviewOverrides(null);
+          setAmbientPlaying(ambientAudio.isPlaying);
           setSettingsOpen(false);
         }}
         currentPin={session.pin}
@@ -898,6 +1180,17 @@ function MainAppContent() {
         onDeletePhoto={handleDeletePhoto}
         onSignOut={handleSignOut}
         onPreviewBackgroundControls={setBgPreviewOverrides}
+      />
+
+      {/* One-Tap Stealth Privacy Lock Overlay (Clock + Functional Calculator) */}
+      <PrivacyLockOverlay
+        isLocked={privacyLocked}
+        validPins={[
+          settings.malePasscode || '0000',
+          settings.femalePasscode || '1111',
+          session.pin,
+        ]}
+        onUnlock={() => setPrivacyLocked(false)}
       />
     </div>
   );

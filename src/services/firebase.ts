@@ -615,7 +615,14 @@ export function subscribePartnerPresence(
   };
 }
 
-export type LiveStateKey = 'wheel' | 'quiz' | 'photos' | 'reaction' | 'background';
+export type LiveStateKey =
+  | 'wheel'
+  | 'quiz'
+  | 'photos'
+  | 'reaction'
+  | 'background'
+  | 'scores'
+  | 'screenEffect';
 
 export async function writeLiveState<T>(
   roomId: string,

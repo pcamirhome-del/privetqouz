@@ -5,10 +5,12 @@ import {
   CalendarHeart,
   Download,
   Eye,
+  Gift,
   Image as ImageIcon,
   Link2,
   Lock,
   LogOut,
+  Music,
   Plus,
   RotateCcw,
   Trash2,
@@ -18,6 +20,7 @@ import {
   ZoomOut,
 } from 'lucide-react';
 import {
+  AmbientSoundMode,
   DEFAULT_MYSTERY_CARDS,
   DEFAULT_ROOM_SETTINGS,
   EncryptedRoomSettings,
@@ -34,6 +37,7 @@ import {
   isDuplicatePhoto,
 } from '../services/mediaStore';
 import {usePWAInstall} from '../hooks/usePWAInstall';
+import {ambientAudio} from '../services/ambientAudio';
 
 type SettingsSection =
   | 'general'
@@ -138,6 +142,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       DEFAULT_ROOM_SETTINGS.periodicReminderMessage ||
       ''
   );
+  const [rewardTargetPoints, setRewardTargetPoints] = useState<number>(
+    settings.rewardTargetPoints ?? 5
+  );
+  const [ambientMode, setAmbientMode] = useState<AmbientSoundMode>(
+    () => ambientAudio.mode
+  );
+  const [ambientVol, setAmbientVol] = useState<number>(
+    () => ambientAudio.volume
+  );
+  const [ambientPlaying, setAmbientPlaying] = useState<boolean>(
+    () => ambientAudio.isPlaying
+  );
   const [wheelSegments, setWheelSegments] = useState<WheelSegment[]>(settings.wheelSegments);
   const [quizRewards, setQuizRewards] = useState<QuizRewardButton[]>(settings.quizRewards);
   const [mysteryCards, setMysteryCards] = useState<MysteryCardItem[]>(
@@ -231,6 +247,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           DEFAULT_ROOM_SETTINGS.periodicReminderMessage ||
           ''
       );
+      setRewardTargetPoints(settings.rewardTargetPoints ?? 5);
+      setAmbientMode(ambientAudio.mode);
+      setAmbientVol(ambientAudio.volume);
+      setAmbientPlaying(ambientAudio.isPlaying);
       setWheelSegments(settings.wheelSegments);
       setQuizRewards(settings.quizRewards);
       setMysteryCards(
@@ -277,6 +297,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         .map((c) => ({...c, text: c.text.trim()}));
 
       const clampedMinutes = Math.max(1, Math.min(120, Math.round(Number(reminderMinutes) || 2)));
+      const clampedRewardPoints = Math.max(
+        1,
+        Math.min(50, Math.round(Number(rewardTargetPoints) || 5))
+      );
 
       const nextSettings: EncryptedRoomSettings = {
         ...settings,
@@ -296,6 +320,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           reminderMessage.trim() ||
           DEFAULT_ROOM_SETTINGS.periodicReminderMessage ||
           '',
+        rewardTargetPoints: clampedRewardPoints,
         wheelSegments: cleanedWheel.length > 0 ? cleanedWheel : settings.wheelSegments,
         quizRewards: cleanedRewards.length > 0 ? cleanedRewards : settings.quizRewards,
         mysteryCards:
@@ -744,6 +769,123 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </div>
                   </div>
 
+                  {/* Milestone Target Points for Special Reward */}
+                  <div className="rounded-2xl border border-rose-300/20 bg-black/35 p-3 space-y-2">
+                    <div className="flex items-center justify-between text-xs font-extrabold text-amber-200">
+                      <span className="flex items-center gap-1.5">
+                        <Gift className="h-4 w-4 text-amber-300" />
+                        <span>نقاط طلب المكافأة الخاصة</span>
+                      </span>
+                      <span className="font-mono-num text-emerald-300">
+                        {rewardTargetPoints} نقاط
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="number"
+                        min={1}
+                        max={50}
+                        dir="ltr"
+                        value={rewardTargetPoints}
+                        onChange={(e) =>
+                          setRewardTargetPoints(
+                            Math.max(1, Math.min(50, Number(e.target.value) || 5))
+                          )
+                        }
+                        className="font-mono-num w-16 rounded-xl border border-rose-300/25 bg-black/45 px-2 py-1.5 text-center text-xs font-bold text-white"
+                      />
+                      <div className="grid flex-1 grid-cols-4 gap-1">
+                        {[3, 5, 10, 15].map((pts) => (
+                          <button
+                            key={pts}
+                            type="button"
+                            onClick={() => setRewardTargetPoints(pts)}
+                            className={`rounded-lg py-1.5 text-[11px] font-bold transition ${
+                              rewardTargetPoints === pts
+                                ? 'bg-amber-500 text-slate-950'
+                                : 'bg-white/10 text-rose-200 hover:bg-white/15'
+                            }`}
+                          >
+                            {pts}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Ambient Lounge Audio Section */}
+                  <div className="rounded-2xl border border-rose-300/20 bg-black/35 p-3 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="flex items-center gap-1.5 text-xs font-extrabold text-amber-200">
+                        <Music className="h-4 w-4 text-rose-400" />
+                        <span>الأجواء الصوتية (Ambient Audio)</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = ambientAudio.toggle();
+                          setAmbientPlaying(next);
+                        }}
+                        className={`rounded-lg px-2.5 py-1 text-[10px] font-extrabold transition ${
+                          ambientPlaying
+                            ? 'bg-emerald-600 text-white shadow'
+                            : 'bg-white/10 text-rose-200 hover:bg-white/20'
+                        }`}
+                      >
+                        {ambientPlaying ? 'قيد التشغيل 🎶' : 'تشغيل'}
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {(
+                        [
+                          ['rain', 'مطر خفيف 🌧️'],
+                          ['waves', 'أمواج هادئة 🌊'],
+                          ['romantic', 'موسيقى رومانسية 🎹'],
+                        ] as Array<[AmbientSoundMode, string]>
+                      ).map(([modeId, label]) => (
+                        <button
+                          key={modeId}
+                          type="button"
+                          onClick={() => {
+                            setAmbientMode(modeId);
+                            ambientAudio.setMode(modeId);
+                          }}
+                          className={`min-h-[38px] rounded-xl px-1.5 py-1 text-[10px] font-bold leading-tight transition ${
+                            ambientMode === modeId
+                              ? 'bg-rose-600 text-white shadow'
+                              : 'bg-white/10 text-rose-200 hover:bg-white/15'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between text-[11px] font-bold text-rose-200 mb-1">
+                        <span>مستوى صوت الأجواء الخلفية</span>
+                        <span className="font-mono-num text-amber-200">
+                          {Math.round(ambientVol * 100)}%
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0.05"
+                        max="1"
+                        step="0.05"
+                        value={ambientVol}
+                        onChange={(e) => {
+                          const v = Number(e.target.value);
+                          setAmbientVol(v);
+                          ambientAudio.setVolume(v);
+                        }}
+                        aria-label="مستوى صوت الأجواء الصوتية"
+                        className="w-full accent-rose-500"
+                      />
+                    </div>
+                  </div>
+
                   <label className="flex items-center justify-between rounded-xl border border-rose-300/20 bg-black/30 px-3 py-2.5 cursor-pointer">
                     <span className="text-xs font-bold text-rose-100">
                       السماح بتكبير الشاشة (Pinch Zoom)
@@ -1173,7 +1315,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       />
                       <button
                         type="button"
-                        disabled={mysteryCards.length <= 4}
+                        disabled={mysteryCards.length <= 1}
                         onClick={() =>
                           setMysteryCards((prev) => prev.filter((_, i) => i !== idx))
                         }

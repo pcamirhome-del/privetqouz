@@ -9,6 +9,11 @@ interface PhotosTabProps {
   photos: SharedPhotoItem[];
   photosState: PhotosLiveState | null;
   onUpdatePhotosState: (next: PhotosLiveState) => Promise<void>;
+  confirmedTaskIds?: string[];
+  onConfirmTaskCompletion?: (
+    taskId: string,
+    executingRole: PartnerRole
+  ) => Promise<void>;
 }
 
 export const PhotosTab: React.FC<PhotosTabProps> = ({
@@ -16,6 +21,8 @@ export const PhotosTab: React.FC<PhotosTabProps> = ({
   photos,
   photosState,
   onUpdatePhotosState,
+  confirmedTaskIds = [],
+  onConfirmTaskCompletion,
 }) => {
   const [localShuffling, setLocalShuffling] = useState(false);
 
@@ -201,18 +208,40 @@ export const PhotosTab: React.FC<PhotosTabProps> = ({
                 className="max-h-[65dvh] w-full rounded-2xl object-contain bg-black/40"
               />
 
-              <div className="mt-2.5 flex items-center justify-between gap-2 px-1">
+              <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 px-1">
                 <span className="text-xs font-bold text-rose-100 truncate">
                   {activePhoto.caption || 'صورة مختارة عشوائياً ❤️'}
                 </span>
                 {isHusband ? (
-                  <button
-                    type="button"
-                    onClick={handleCloseActivePhoto}
-                    className="shrink-0 rounded-xl bg-rose-600 px-3.5 py-1.5 text-xs font-extrabold text-white hover:bg-rose-500 transition"
-                  >
-                    إغلاق الصورة
-                  </button>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {onConfirmTaskCompletion &&
+                      (() => {
+                        const photoTaskId = `photo_${photosState?.shuffleId || activePhoto.id}`;
+                        const done = confirmedTaskIds.includes(photoTaskId);
+                        return done ? (
+                          <span className="rounded-xl bg-emerald-600/80 px-2.5 py-1.5 text-[11px] font-extrabold text-white">
+                            تم التنفيذ +1 ✅
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              onConfirmTaskCompletion(photoTaskId, 'female')
+                            }
+                            className="rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-extrabold text-white shadow hover:bg-emerald-500 active:scale-95 transition"
+                          >
+                            تم التنفيذ ✅
+                          </button>
+                        );
+                      })()}
+                    <button
+                      type="button"
+                      onClick={handleCloseActivePhoto}
+                      className="rounded-xl bg-rose-600 px-3.5 py-1.5 text-xs font-extrabold text-white hover:bg-rose-500 transition"
+                    >
+                      إغلاق الصورة
+                    </button>
+                  </div>
                 ) : (
                   <span className="shrink-0 rounded-xl bg-white/10 px-2.5 py-1 text-[10px] font-bold text-rose-200">
                     إغلاق الصورة للزوج فقط 💙
